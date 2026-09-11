@@ -241,6 +241,13 @@ Two test levels operate on the host, without hardware:
 The simulation does not cover the stack use on the target, the SoftDevice
 flash timing, or the radio. Those need a tag.
 
+- **Hardware test tool**: `test/tools/nus_logread.py` on a Linux host with
+  BlueZ. It does the same GATT log read as the apps and writes a CSV.
+  `nus_logread.py scan` shows the Ruuvi tags in range with their
+  advertisement data. `nus_logread.py read <MAC> --days 400` reads the
+  full ring. The tag accepts one connection: a phone app that is connected
+  to the tag blocks the tool.
+
 ## Fake data build
 
 The variant `vlongmemfake` is for tests of the apps. At the first boot with
