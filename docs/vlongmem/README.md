@@ -279,6 +279,12 @@ Note: the 10-day read with the tool gave the first timestamps 2 s apart from
 the 400-day read. A connection less than 1 hour after the last anchor
 replaces the anchor, and the uptime has a resolution of 1 s.
 
+Ruuvi Station for Android synchronized with the tagged build
+v3.34.1-vlongmem.1 and showed the last 10 days of the synthetic year: the
+daily triangle waves of the temperature and the humidity, and the pressure
+waves. A build from an untagged commit did not synchronize, refer to
+"Connection".
+
 ## Fake data build
 
 The variant `vlongmemfake` is for tests of the apps. At the first boot with
@@ -312,8 +318,6 @@ seconds at the boot.
 
 ## Open items
 
-- A sync with Ruuvi Station on a phone. The reads with the tool on a Linux
-  host are complete, refer to "Tests".
 - A long test on a tag for the battery life and the flash timing over
   months.
 - App changes for a read of a full year, a later decision.
