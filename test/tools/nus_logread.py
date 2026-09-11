@@ -157,6 +157,7 @@ class LogReader:
         self.csv_path = csv_path
         self.rx = None
         self.tx = None
+        self.fw_char = None
         self.samples = {}  # timestamp -> {field: value}
         self.messages = 0
         self.heartbeats = 0
@@ -171,6 +172,8 @@ class LogReader:
             if not ch or not path.startswith(dev_path):
                 continue
             uuid = str(ch["UUID"]).lower()
+            if uuid.startswith("00002a26"):
+                self.fw_char = dbus.Interface(self.bz.bus.get_object(BLUEZ, path), CHAR_IFACE)
             if uuid == NUS_RX:
                 self.rx = dbus.Interface(self.bz.bus.get_object(BLUEZ, path), CHAR_IFACE)
             elif uuid == NUS_TX:
@@ -254,6 +257,12 @@ class LogReader:
             dev.Disconnect()
             sys.exit("NUS characteristics not found")
         print("connected in %.1f s, services resolved" % (time.monotonic() - t0))
+        if self.fw_char is not None:
+            try:
+                fw = bytes(self.fw_char.ReadValue({})).decode("ascii", "replace")
+                print("firmware revision: %s" % fw)
+            except dbus.DBusException as e:
+                print("firmware revision read failed: %s" % e.get_dbus_message())
         bz.bus.add_signal_receiver(self.on_notify, dbus_interface=PROPS_IFACE,
                                    signal_name="PropertiesChanged", path_keyword="path")
         self.tx.StartNotify()
