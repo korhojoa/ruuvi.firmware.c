@@ -26,6 +26,7 @@
 #include "ruuvi_driver_sensor.h"
 #if APP_VLONGMEM_ENABLED
 #include "app_log_vlongmem_codec.h"
+#include "app_log_vlongmem_time.h"
 #endif
 
 #define STORAGE_RECORD_HEADER_SIZE (96U) //!< bytes allocated for header.
@@ -68,7 +69,9 @@ typedef struct
     uint32_t seq;                     //!< Block sequence in use, 0 = not started.
     uint16_t pos;                     //!< Byte position in the block data.
     uint16_t interval_s;              //!< Interval of the current block.
-    uint32_t block_epoch_start_s;     //!< Epoch of the first sample of the block.
+    uint32_t block_start_uptime_s;    //!< Uptime at the first sample of the block.
+    uint32_t block_boot_id;           //!< Boot session of the block.
+    uint32_t block_offset_s;          //!< Header epoch offset, or VLMT_NO_OFFSET.
     bool block_valid;                 //!< The current block is found and has a date.
     vlmc_state_t dec;                 //!< Decoder reference.
 } app_log_read_state_t; //!< Log read state.
@@ -79,7 +82,8 @@ typedef struct
  * Each log read calls this function with the current time of the phone. The
  * function records the epoch offset of the current boot session. Then it
  * writes the offset into each block header of this session that has no
- * offset.
+ * offset. It also adds a time anchor (app_log_vlongmem_time.h) for the
+ * drift correction and keeps the anchors in flash.
  *
  * @param[in] epoch_now_s Current time, seconds from 1970.
  */

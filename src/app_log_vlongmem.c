@@ -9,9 +9,10 @@
  *
  * Time: the samples are on a fixed grid of APP_LOG_INTERVAL_S from the start
  * uptime of the block. A slot without a sample is written as a missing
- * marker. Thus the grid does not move. The absolute time is the epoch offset
- * of the boot session. The phone gives it at each log read, and the offset
- * is written into the block headers of that session.
+ * marker. Thus the grid does not move. The phone gives the absolute time at
+ * each log read. The time is kept as an anchor (app_log_vlongmem_time.c) for
+ * the drift correction, and as an epoch offset in the block headers of the
+ * session.
  *
  * @copyright Ruuvi Innovations Ltd, license BSD-3-Clause.
  */
@@ -21,6 +22,7 @@
 
 #include "app_config.h"
 #include "app_log_vlongmem_codec.h"
+#include "app_log_vlongmem_time.h"
 #include "ruuvi_driver_error.h"
 #include "ruuvi_driver_sensor.h"
 #include "ruuvi_interface_flash.h"
@@ -65,6 +67,7 @@ typedef struct
 } vlm_header_t;
 
 _Static_assert (sizeof (vlm_header_t) == VLM_HEADER_SIZE, "header size");
+_Static_assert (VLM_UNKNOWN == VLMT_NO_OFFSET, "unknown offset value");
 _Static_assert (VLM_PAGES >= 2U, "ring needs at least two pages");
 _Static_assert (0 == (APP_VLONGMEM_REGION_START % RB_FLASH_PAGE_SIZE), "region alignment");
 _Static_assert (0 == (APP_VLONGMEM_REGION_END % RB_FLASH_PAGE_SIZE), "region alignment");
@@ -96,6 +99,7 @@ static uint32_t m_boot_id;
 static uint32_t m_session_first_seq; //!< The first seq of this boot session.
 static uint32_t m_epoch_offset_s = VLM_UNKNOWN;
 static uint32_t m_next_seq;          //!< The seq of the next block.
+static vlmt_anchors_t m_anchors;     //!< Phone time at tag uptime, in FDS.
 
 // Open block state.
 static bool     m_block_open;
@@ -133,6 +137,32 @@ static void fs_wait (void)
 static uint32_t page_addr (const uint32_t page)
 {
     return APP_VLONGMEM_REGION_START + (page * VLM_PAGE_SIZE);
+}
+
+/**
+ * @brief Uptime in seconds.
+ *
+ * The RTC driver reads the counter and the overflow count without a lock.
+ * A read at the overflow can be 512 s low. Two reads that agree in 1 s are
+ * correct.
+ */
+static uint32_t uptime_now_s (void)
+{
+    uint64_t a = ri_rtc_millis();
+
+    for (uint32_t tries = 0; tries < 3U; tries++)
+    {
+        const uint64_t b = ri_rtc_millis();
+
+        if ( (b >= a) && ( (b - a) < 1000ULL))
+        {
+            return (uint32_t) (b / 1000ULL);
+        }
+
+        a = b;
+    }
+
+    return (uint32_t) (a / 1000ULL);
 }
 
 static const vlm_header_t * page_header (const uint32_t page)
@@ -320,6 +350,17 @@ rd_status_t app_log_init (void)
     while (rt_flash_busy()) { ri_yield(); }
 
     m_boot_id = boot_count;
+    // The time anchors of earlier sessions.
+    memset (&m_anchors, 0, sizeof (m_anchors));
+    rd_status_t anchor_status = rt_flash_load (APP_FLASH_LOG_FILE,
+                                APP_FLASH_LOG_TIME_ANCHORS_RECORD,
+                                &m_anchors, sizeof (m_anchors));
+
+    if (RD_SUCCESS != anchor_status)
+    {
+        memset (&m_anchors, 0, sizeof (m_anchors));
+    }
+
     // Find the newest block. The next block continues from there.
     uint32_t max_seq = 0;
 
@@ -400,7 +441,20 @@ void app_log_time_set (const uint32_t epoch_now_s)
 {
     if (!m_initialized) { return; }
 
-    const uint32_t uptime_s = (uint32_t) (ri_rtc_millis() / 1000ULL);
+    const uint32_t uptime_s = uptime_now_s();
+
+    if (vlmt_anchor_add (&m_anchors, m_boot_id, uptime_s, epoch_now_s))
+    {
+        while (rt_flash_busy()) { ri_yield(); }
+
+        (void) rt_flash_store (APP_FLASH_LOG_FILE, APP_FLASH_LOG_TIME_ANCHORS_RECORD,
+                               &m_anchors, sizeof (m_anchors));
+
+        while (rt_flash_busy()) { ri_yield(); }
+    }
+
+    if (epoch_now_s < VLMT_MIN_EPOCH_S) { return; } // The phone clock is not set.
+
     m_epoch_offset_s = epoch_now_s - uptime_s;
     m_word_buf[0] = m_epoch_offset_s;
 
@@ -439,29 +493,31 @@ static bool next_block (app_log_read_state_t * const p_rs)
 
         uint32_t offset_s = p_h->epoch_offset_s;
 
-        if (VLM_UNKNOWN == offset_s)
+        if ( (VLM_UNKNOWN == offset_s) && (seq >= m_session_first_seq))
         {
-            if ( (seq >= m_session_first_seq) && (VLM_UNKNOWN != m_epoch_offset_s))
-            {
-                offset_s = m_epoch_offset_s;
-            }
-            else
-            {
-                continue; // The session never connected to a phone, the block has no date.
-            }
+            offset_s = m_epoch_offset_s; // VLM_UNKNOWN when this session has not connected.
         }
 
-        const uint32_t start_s = offset_s + p_h->start_uptime_s;
-        const uint64_t latest_possible_ms =
-            ( (uint64_t) start_s + ( (uint64_t) VLM_MAX_SAMPLES_PER_BLOCK * p_h->interval_s)) * 1000ULL;
+        // The last possible sample of the block, with a margin for the drift correction.
+        const uint32_t last_uptime_s = p_h->start_uptime_s
+                                       + (VLM_MAX_SAMPLES_PER_BLOCK * p_h->interval_s)
+                                       + 86400U;
+        uint32_t latest_s = 0;
 
-        if (latest_possible_ms < p_rs->oldest_element_ms) { continue; }
+        if (!vlmt_epoch_get (&m_anchors, p_h->boot_id, last_uptime_s, offset_s, &latest_s))
+        {
+            continue; // The session never connected to a phone, the block has no date.
+        }
+
+        if ( ( (uint64_t) latest_s * 1000ULL) < p_rs->oldest_element_ms) { continue; }
 
         p_rs->seq = seq;
         p_rs->pos = 0;
         p_rs->element_idx = 0;
         p_rs->interval_s = p_h->interval_s;
-        p_rs->block_epoch_start_s = start_s;
+        p_rs->block_start_uptime_s = p_h->start_uptime_s;
+        p_rs->block_boot_id = p_h->boot_id;
+        p_rs->block_offset_s = offset_s;
         memset (&p_rs->dec, 0, sizeof (p_rs->dec));
         p_rs->block_valid = true;
         return true;
@@ -560,8 +616,17 @@ rd_status_t app_log_read (rd_sensor_data_t * const sample,
         }
 
         const uint32_t idx = p_rs->element_idx++;
-        const uint64_t epoch_ms = ( (uint64_t) p_rs->block_epoch_start_s
-                                    + ( (uint64_t) idx * p_rs->interval_s)) * 1000ULL;
+        const uint32_t uptime_s = p_rs->block_start_uptime_s + (idx * p_rs->interval_s);
+        uint32_t epoch_s = 0;
+
+        if (!vlmt_epoch_get (&m_anchors, p_rs->block_boot_id, uptime_s,
+                             p_rs->block_offset_s, &epoch_s))
+        {
+            p_rs->block_valid = false;
+            continue;
+        }
+
+        const uint64_t epoch_ms = (uint64_t) epoch_s * 1000ULL;
 
         if (epoch_ms < p_rs->oldest_element_ms) { continue; }
 

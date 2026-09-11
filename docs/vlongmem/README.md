@@ -142,16 +142,46 @@ a GATT transfer that blocks the scheduler) is written as a missing marker.
 Thus the grid does not move.
 
 The phone gives the absolute time. Each log-read request has the current
-time of the phone. The variant calculates the epoch offset for the current
-boot session. Then it writes the offset into the header of each block of
-that session that has no offset. A block from an earlier boot session keeps
-the offset from that time. A block from a session that never connected to a
-phone has no date, and the tag does not send it. Thus the installation
-procedure has one step after the battery is installed: connect one time with
-the app, and the offset is recorded.
+time of the phone. The variant keeps that time and the tag uptime as a time
+anchor for the current boot session, in the settings area of the flash. It
+also writes the epoch offset into the header of each block of that session
+that has no offset. A block from a session that never connected to a phone
+has no date, and the tag does not send it. Thus the installation procedure
+has one step after the battery is installed: connect one time with the app,
+and the time is recorded.
 
-A reboot always starts a new block. The gap between the last sample before
-the reboot and the first sample after the reboot is not known.
+### Clock drift
+
+The uptime counter runs from a 32.768 kHz crystal. The SoftDevice
+configuration declares it as 20 ppm. A tuning-fork crystal is slower when it
+is cold, by approximately 0.034 ppm for each squared degree from 25 deg C.
+Typical values for one year:
+
+| Condition | Rate | Error in one year |
+|---|---|---|
+| Tolerance at 25 deg C | 20 ppm | 10.5 min |
+| 5 deg C | 14 ppm slow | 7 min slow |
+| -10 deg C | 42 ppm slow | 22 min slow |
+| -25 deg C | 85 ppm slow | 45 min slow |
+
+The anchors correct this. When a session has two or more anchors, the time
+of a sample is a linear interpolation between the two nearest anchors, or an
+extrapolation with the rate of the nearest pair. The times are calculated
+when the log is read, thus a later connection also corrects the samples
+before it. With one connection at the start and one at the end, the error in
+the period between them is some seconds. With one anchor, the time is the
+anchor offset and the drift is not corrected.
+
+The tag keeps a maximum of 16 anchors, a maximum of 4 for each session. A
+connection less than 1 hour after the last anchor replaces that anchor. A
+phone time that shows a rate error of more than 1 % against the first anchor
+of the session is not accepted, and a phone time before 2020 is not
+accepted. A session without anchors uses the header offset. Refer to
+`FORMAT.md` for the record layout.
+
+A reboot always starts a new block and a new session. The gap between the
+last sample before the reboot and the first sample after the reboot is not
+known.
 
 ## Connection
 

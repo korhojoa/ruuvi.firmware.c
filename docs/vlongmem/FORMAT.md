@@ -40,14 +40,39 @@ the current session is written into each header of that session that holds
 0xFFFFFFFF. The nRF52832 flash lets you write a 32-bit word two times
 between erases. This is the second write.
 
-The absolute time of sample `i` in a block is:
+The uptime of sample `i` in a block is:
 
 ```
-epoch_s = epoch_offset_s + start_uptime_s + i * interval_s
+uptime_s = start_uptime_s + i * interval_s
 ```
 
-A block with an unknown `epoch_offset_s` from a session that is not the
-current session has no date. The tag does not send it.
+The absolute time comes from the time anchors of the block's session, refer
+to "Time anchors record". Without anchors, the time is
+`epoch_offset_s + uptime_s`. A block with an unknown `epoch_offset_s` and no
+anchors has no date. The tag does not send it.
+
+## Time anchors record
+
+The anchors are in the FDS settings area, file 0xF0, record 0x02. The record
+is the structure `vlmt_anchors_t` from `src/app_log_vlongmem_time.h`:
+
+| Offset | Size | Field | Notes |
+|---|---|---|---|
+| 0 | 4 | count | number of anchors, 0 to 16 |
+| 4 + 12 * n | 4 | boot_id | boot session of anchor n |
+| 8 + 12 * n | 4 | uptime_s | tag uptime, seconds |
+| 12 + 12 * n | 4 | epoch_s | phone time, seconds from 1970 |
+
+The anchors of one session are in the sequence of uptime. The time of an
+uptime `u` in a session is:
+
+- With two or more anchors: linear interpolation between the two nearest
+  anchors, or extrapolation with the rate of the nearest pair when `u` is
+  outside the anchors.
+- With one anchor: `epoch_s + (u - uptime_s)` of that anchor.
+- With no anchor: the header offset, as given above.
+
+The rules for a new anchor are in the header file.
 
 ## Sample data, bytes 32 to 4095 of the page
 

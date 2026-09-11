@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Build and operate the unit test of the vlongmem codec on the host with gcc
-# and the vendored Unity. The test has no mocks, thus ceedling is not
-# necessary.
+# Build and operate the unit tests of the vlongmem codec and time anchors on
+# the host with gcc and the vendored Unity. The tests have no mocks, thus
+# ceedling is not necessary.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="${TMPDIR:-/tmp}/vlongmem-codec-test"
+OUT="${TMPDIR:-/tmp}/vlongmem-test"
 mkdir -p "${OUT}"
-cat > "${OUT}/runner.c" <<'EOF'
+UNITY="${ROOT}/CMock/vendor/unity/src"
+CFLAGS=(-std=c99 -Wall -Wextra -Werror -O1 -DUNITY_INCLUDE_DOUBLE -I "${UNITY}" -I "${ROOT}/src")
+
+cat > "${OUT}/runner_codec.c" <<'EOF'
 #include "unity.h"
 void setUp(void); void tearDown(void);
 #define T(name) void name(void); RUN_TEST(name);
@@ -31,11 +34,37 @@ int main(void) {
     return UNITY_END();
 }
 EOF
-gcc -std=c99 -Wall -Wextra -Werror -O1 \
-    -DUNITY_INCLUDE_DOUBLE \
-    -I "${ROOT}/CMock/vendor/unity/src" -I "${ROOT}/src" \
-    "${ROOT}/CMock/vendor/unity/src/unity.c" \
+gcc "${CFLAGS[@]}" "${UNITY}/unity.c" \
     "${ROOT}/src/app_log_vlongmem_codec.c" \
     "${ROOT}/test/test_app_log_vlongmem_codec.c" \
-    "${OUT}/runner.c" -lm -o "${OUT}/test"
-"${OUT}/test"
+    "${OUT}/runner_codec.c" -lm -o "${OUT}/test_codec"
+"${OUT}/test_codec"
+
+cat > "${OUT}/runner_time.c" <<'EOF'
+#include "unity.h"
+void setUp(void); void tearDown(void);
+#define T(name) void name(void); RUN_TEST(name);
+int main(void) {
+    UNITY_BEGIN();
+    T(test_no_anchor_uses_header_offset)
+    T(test_no_anchor_no_offset_has_no_date)
+    T(test_one_anchor_is_an_offset)
+    T(test_anchor_of_other_session_is_not_used)
+    T(test_two_anchors_correct_a_slow_clock)
+    T(test_three_anchors_use_the_nearest_segment)
+    T(test_close_anchor_replaces_the_last)
+    T(test_anchor_not_after_the_last_is_rejected)
+    T(test_wrong_phone_clock_is_rejected)
+    T(test_unset_phone_clock_is_rejected)
+    T(test_session_limit_replaces_the_last)
+    T(test_full_list_removes_the_oldest_session)
+    T(test_session_anchors_stay_together)
+    T(test_corrupt_count_is_ignored)
+    return UNITY_END();
+}
+EOF
+gcc "${CFLAGS[@]}" "${UNITY}/unity.c" \
+    "${ROOT}/src/app_log_vlongmem_time.c" \
+    "${ROOT}/test/test_app_log_vlongmem_time.c" \
+    "${OUT}/runner_time.c" -o "${OUT}/test_time"
+"${OUT}/test_time"

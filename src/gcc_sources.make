@@ -301,6 +301,7 @@ RUUVI_PRJ_SOURCES= \
   $(PROJ_DIR)/app_log.c \
   $(PROJ_DIR)/app_log_vlongmem.c \
   $(PROJ_DIR)/app_log_vlongmem_codec.c \
+  $(PROJ_DIR)/app_log_vlongmem_time.c \
   $(PROJ_DIR)/app_power.c \
   $(PROJ_DIR)/app_sensor.c
 

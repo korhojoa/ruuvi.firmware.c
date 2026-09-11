@@ -392,6 +392,7 @@
 #define APP_FLASH_LOG_FILE                (0xF0U)
 #define APP_FLASH_LOG_CONFIG_RECORD       (0x01U)
 #define APP_FLASH_LOG_BOOT_COUNTER_RECORD (0xEFU)
+#define APP_FLASH_LOG_TIME_ANCHORS_RECORD (0x02U) //!< vlongmem: phone time at tag uptime.
 #define APP_FLASH_LOG_DATA_RECORD_PREFIX  (0xF0U) //!< Prefix, append with U8 number
 
 
