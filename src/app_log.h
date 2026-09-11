@@ -20,9 +20,13 @@
  * @copyright Ruuvi Innovations Ltd, license BSD-3-Clause.
  */
 
+#include "app_config.h"
 #include "ruuvi_boards.h"
 #include "ruuvi_driver_error.h"
 #include "ruuvi_driver_sensor.h"
+#if APP_VLONGMEM_ENABLED
+#include "app_log_vlongmem_codec.h"
+#endif
 
 #define STORAGE_RECORD_HEADER_SIZE (96U) //!< bytes allocated for header.
 /** @brief bytes of compressed data.  */
@@ -48,12 +52,46 @@ typedef struct
     float pressure_pa;
 } app_log_element_t;
 
+#if APP_VLONGMEM_ENABLED
+/**
+ * @brief Log read state for the vlongmem ring buffer.
+ *
+ * The vlongmem variant uses epoch seconds, not the system uptime. Thus
+ * oldest_element_ms is in epoch milliseconds, and app_log_read() gives
+ * epoch milliseconds in the sample.
+ */
+typedef struct
+{
+    uint8_t page_idx;                 //!< Not used, kept for the initializer.
+    uint16_t element_idx;             //!< Sample index in the current block.
+    const uint64_t oldest_element_ms; //!< Oldest epoch time to send, ms.
+    uint32_t seq;                     //!< Block sequence in use, 0 = not started.
+    uint16_t pos;                     //!< Byte position in the block data.
+    uint16_t interval_s;              //!< Interval of the current block.
+    uint32_t block_epoch_start_s;     //!< Epoch of the first sample of the block.
+    bool block_valid;                 //!< The current block is found and has a date.
+    vlmc_state_t dec;                 //!< Decoder reference.
+} app_log_read_state_t; //!< Log read state.
+
+/**
+ * @brief Set the absolute time of the log.
+ *
+ * Each log read calls this function with the current time of the phone. The
+ * function records the epoch offset of the current boot session. Then it
+ * writes the offset into each block header of this session that has no
+ * offset.
+ *
+ * @param[in] epoch_now_s Current time, seconds from 1970.
+ */
+void app_log_time_set (const uint32_t epoch_now_s);
+#else
 typedef struct
 {
     uint8_t page_idx; //!< Index of page being read.
     uint16_t element_idx; //!< Index of element being read.
     const uint64_t oldest_element_ms; //!< Age of oldest element to return in system time.
 } app_log_read_state_t; //!< Log read state.
+#endif
 
 #define APP_LOG_MAX_SAMPLES (STORAGE_BLOCK_SIZE/sizeof(app_log_element_t))
 

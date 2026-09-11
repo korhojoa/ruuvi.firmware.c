@@ -109,6 +109,12 @@ The Makefile uses the tag name of current git commit for filenames and version n
 Tags should be valid semantic versions, starting with `v` and possibly having pre-release information such as `-rc2`. 
 Do not add build information such as `+TestFW`. If you have tagged the version as `v3.99.1` the files will be named `$BOARD_armgcc_ruuvifw_$VARIANT_v3.99.1_$TYPE.extension`. For example `ruuvitag_b_armgcc_ruuvifw_default_v3.29.3-rc1_full.hex`. 
 
+### Container build
+`scripts/podman/build.sh [make args]` does the build in a rootless podman image. The image has the CI toolchain (gcc-arm 7-2018-q2, SDK 15.3, nrfutil, mergehex). Thus no tool installation on the host is necessary. Refer to `scripts/podman/Dockerfile`.
+
+### vlongmem variant
+The `vlongmem` variant keeps one year of temperature, humidity and pressure history in flash. It sends the history through the standard GATT log-read protocol. The design and the findings are in `docs/vlongmem/README.md`. The flash layout is in `docs/vlongmem/FORMAT.md`.
+
 ### Flashing
 Connect your board with either:
 * nRF52 DevKit and [RuuviTag Development Shield](https://lab.ruuvi.com/devshield/). 

@@ -34,6 +34,11 @@
 /** @brief enable nRF15 SDK implementation of drivers */
 #define RUUVI_NRF5_SDK15_ENABLED (1U)
 
+/** @brief Environmental log ring in raw flash, refer to application_mode_vlongmem.h */
+#ifndef APP_VLONGMEM_ENABLED
+#   define APP_VLONGMEM_ENABLED (0U)
+#endif
+
 #ifndef APP_HEARTBEAT_OVERDUE_INTERVAL_MS
 #   define APP_HEARTBEAT_OVERDUE_INTERVAL_MS (5U * 60U * 1000U)
 #endif
@@ -363,7 +368,9 @@
 
 // ***** Flash storage constants *****/
 
-#define APP_FLASH_PAGES (16U) //!< 64 kB flash storage if page size is 4 kB.
+#ifndef APP_FLASH_PAGES
+#   define APP_FLASH_PAGES (16U) //!< 64 kB flash storage if page size is 4 kB.
+#endif
 #define APP_FLASH_LOG_DATA_RECORDS_NUM   (APP_FLASH_PAGES - 2U) //!< swap page + settings.
 
 // File constants can be any non-zero uint8.

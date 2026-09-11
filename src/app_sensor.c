@@ -22,6 +22,7 @@
 #include "ruuvi_interface_shtcx.h"
 #include "ruuvi_interface_sths34pf80.h"
 #include "ruuvi_interface_spi.h"
+#include "ruuvi_interface_watchdog.h"
 #include "ruuvi_interface_yield.h"
 #include "ruuvi_task_adc.h"
 #include "ruuvi_task_sensor.h"
@@ -789,6 +790,7 @@ static rd_status_t app_sensor_send_eof (const ri_comm_xfer_fp_t reply_fp,
     return err_code;
 }
 
+#if !APP_VLONGMEM_ENABLED
 /**
  * @brief Send heartbeat overdue data message.
  * TODO -refactor encoding to endpoints.
@@ -807,6 +809,7 @@ static rd_status_t app_sensor_send_timeout (const ri_comm_xfer_fp_t reply_fp,
     app_comms_blocking_send (reply_fp, &msg);
     return err_code;
 }
+#endif // !APP_VLONGMEM_ENABLED
 
 /**
  * @brief Log read sensor op.
@@ -836,14 +839,20 @@ static rd_status_t app_sensor_log_read (const ri_comm_xfer_fp_t reply_fp,
     int64_t current_time_s = (int64_t) re_std_log_current_time (raw_message);
     int64_t start_s = (int64_t) re_std_log_start_time (raw_message);
     uint32_t sent_elements = 0;
-    // overflow in 292 277 266 years
-    const int64_t system_time_ms = (int64_t) ri_rtc_millis();
 
     // Cannot have start_s >= current_time_s
     if (current_time_s > start_s)
     {
-        // Parse offset to system clock
         LOG ("Sending logged data\r\n");
+#if APP_VLONGMEM_ENABLED
+        // The log keeps the epoch time. The clock of the phone sets it.
+        app_log_time_set ( (uint32_t) current_time_s);
+        const int64_t offset_ms = 0;
+        sample.timestamp_ms = ( (uint64_t) start_s) * 1000ULL;
+#else
+        // Parse offset to system clock
+        // overflow in 292 277 266 years
+        const int64_t system_time_ms = (int64_t) ri_rtc_millis();
         int64_t system_time_s = (system_time_ms / 1000LL);
         int64_t offset_ms = (current_time_s - system_time_s)  * 1000LL;
         int64_t time_diff_ms = (current_time_s - start_s) * 1000LL;
@@ -860,6 +869,7 @@ static rd_status_t app_sensor_log_read (const ri_comm_xfer_fp_t reply_fp,
             sample.timestamp_ms = system_time_ms - time_diff_ms;
         }
 
+#endif
         app_log_read_state_t rs =
         {
             .oldest_element_ms = sample.timestamp_ms,
@@ -882,11 +892,23 @@ static rd_status_t app_sensor_log_read (const ri_comm_xfer_fp_t reply_fp,
                 LOG (msg);
                 sent_elements = 0;
             }
+#if APP_VLONGMEM_ENABLED
+            // A read of a full year continues for more than the heartbeat
+            // timeout. The heartbeat cannot operate while this loop blocks
+            // the scheduler. Thus this loop puts the signal to the watchdog.
+            // Then app_log_process records the sample slots that were
+            // missed as missing.
+            else if (RD_SUCCESS != ri_watchdog_feed())
+            {
+                err_code |= RD_ERROR_INTERNAL;
+            }
+#else
             else if (app_heartbeat_overdue())
             {
                 err_code |= RD_ERROR_TIMEOUT;
                 err_code |= app_sensor_send_timeout (reply_fp, raw_message);
             }
+#endif
             // If data element was found, send log element.
             else if (RD_SUCCESS == err_code)
             {

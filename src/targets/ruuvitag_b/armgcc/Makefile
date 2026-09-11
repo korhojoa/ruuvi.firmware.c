@@ -8,6 +8,12 @@ PROJ_DIR := ../../..
 $(OUTPUT_DIRECTORY)/nrf52832_xxaa.out: \
   LINKER_SCRIPT  := ruuvitag_b.ld
 
+# The vlongmem variant moves the storage section down to make space for the log ring.
+ifneq (,$(findstring APPLICATION_MODE_VLONGMEM,$(MODE)))
+$(OUTPUT_DIRECTORY)/nrf52832_xxaa.out: \
+  LINKER_SCRIPT  := ruuvitag_b_vlongmem.ld
+endif
+
 include ${PROJ_DIR}/gcc_sources.make
 
 # Source files common to all targets

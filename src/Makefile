@@ -15,7 +15,7 @@
 #
 # Default behavior (no arguments):
 #   Builds ruuvitag_b and pca10040 boards with all variants:
-#   default, test, longmem, longlife, uuid
+#   default, test, longmem, longlife, uuid, vlongmem
 #
 # Usage examples:
 #   make                                              # Build default boards/variants
@@ -26,7 +26,7 @@
 #   make BOARDS="kaarle" VARIANTS="longlife"          # Build kaarle with longlife only
 #
 # Available boards: ruuvitag_b, pca10040, kaarle, kalervo, keijo
-# Available variants: default, test, longmem, longlife, uuid
+# Available variants: default, test, longmem, longlife, uuid, vlongmem
 
 #  For example v3.31.1
 TAG := $(shell git describe --tags --exact-match)
@@ -40,7 +40,7 @@ VERSION := $(if $(TAG),\\\"$(TAG)\\\",\\\"$(COMMIT)\\\")
 # Default boards and variants - can be overridden from command line
 # Usage: make BOARDS="pca10040 ruuvitag_b" VARIANTS="default test"
 BOARDS ?= ruuvitag_b pca10040
-VARIANTS ?= default test longmem longlife uuid
+VARIANTS ?= default test longmem longlife uuid vlongmem
 
 # Variant to mode mapping
 MODE_default   = -DAPPLICATION_MODE_DEFAULT
@@ -48,6 +48,7 @@ MODE_test      = -DAPPLICATION_MODE_DEBUG
 MODE_longmem   = -DAPPLICATION_MODE_LONGMEM
 MODE_longlife  = -DAPPLICATION_MODE_LONGLIFE
 MODE_uuid      = -DAPPLICATION_MODE_UUID
+MODE_vlongmem   = -DAPPLICATION_MODE_VLONGMEM
 
 # Variant to debug flag mapping
 DEBUG_default  = -DNDEBUG
@@ -55,6 +56,7 @@ DEBUG_test     = -DDEBUG
 DEBUG_longmem  = -DNDEBUG
 DEBUG_longlife = -DNDEBUG
 DEBUG_uuid     = -DNDEBUG
+DEBUG_vlongmem  = -DNDEBUG
 
 # Variant to optimization flag mapping (release builds optimized, debug builds with debug info)
 OPT_default    = -Os -g3
@@ -62,6 +64,7 @@ OPT_test       = -Og -g3
 OPT_longmem    = -Os
 OPT_longlife   = -Os
 OPT_uuid       = -Os
+OPT_vlongmem    = -Os -g3
 
 # Variant to extra flags mapping (test variant runs tests)
 EXTRA_test     = RUN_TESTS=-DRUUVI_RUN_TESTS
@@ -89,6 +92,7 @@ $(1):
 			longmem)  debug="$(DEBUG_longmem)";  mode="$(MODE_longmem)";  opt="$(OPT_longmem)";  extra="" ;; \
 			longlife) debug="$(DEBUG_longlife)"; mode="$(MODE_longlife)"; opt="$(OPT_longlife)"; extra="" ;; \
 			uuid)     debug="$(DEBUG_uuid)";     mode="$(MODE_uuid)";     opt="$(OPT_uuid)";     extra="" ;; \
+			vlongmem)  debug="$(DEBUG_vlongmem)";  mode="$(MODE_vlongmem)";  opt="$(OPT_vlongmem)";  extra="" ;; \
 			*) echo "Unknown variant: $$$$variant"; exit 1 ;; \
 		esac; \
 		$$(MAKE) -C targets/$(1)/armgcc clean 2>/dev/null || true; \

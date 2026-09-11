@@ -34,7 +34,9 @@
 #include "ruuvi_interface_yield.h"
 #include "ruuvi_task_flash.h"
 
-#if RT_FLASH_ENABLED
+#if APP_VLONGMEM_ENABLED
+// The code is in app_log_vlongmem.c
+#elif RT_FLASH_ENABLED
 
 static inline void LOGI (const char * const msg)
 {
