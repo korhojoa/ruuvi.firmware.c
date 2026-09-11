@@ -30,7 +30,7 @@ static int32_t noise (const uint32_t slot, const uint32_t channel, const int32_t
 void vlmf_sample (const uint32_t slot, vlmc_sample_t * const p_sample)
 {
     // Temperature: winter start, yearly +/-12 deg C around 8 deg C, daily +/-3 deg C.
-    int32_t temp = 800 + triangle (slot + (SLOTS_PER_YEAR / 2U), SLOTS_PER_YEAR, 1200)
+    int32_t temp = 800 + triangle (slot, SLOTS_PER_YEAR, 1200)
                    + triangle (slot + (VLMF_SLOTS_PER_DAY / 4U), VLMF_SLOTS_PER_DAY, 300)
                    + noise (slot, 1, 8);
     // Humidity: opposite to the temperature, 30 to 90 %RH.
