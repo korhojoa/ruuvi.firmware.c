@@ -58,6 +58,7 @@ int main(void) {
     T(test_unset_phone_clock_is_rejected)
     T(test_session_limit_replaces_the_last)
     T(test_full_list_removes_the_oldest_session)
+    T(test_full_list_removes_sessions_with_no_data_first)
     T(test_session_anchors_stay_together)
     T(test_corrupt_count_is_ignored)
     return UNITY_END();

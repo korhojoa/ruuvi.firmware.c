@@ -58,7 +58,7 @@ is the structure `vlmt_anchors_t` from `src/app_log_vlongmem_time.h`:
 
 | Offset | Size | Field | Notes |
 |---|---|---|---|
-| 0 | 4 | count | number of anchors, 0 to 16 |
+| 0 | 4 | count | number of anchors, 0 to 32 |
 | 4 + 12 * n | 4 | boot_id | boot session of anchor n |
 | 8 + 12 * n | 4 | uptime_s | tag uptime, seconds |
 | 12 + 12 * n | 4 | epoch_s | phone time, seconds from 1970 |
@@ -86,7 +86,11 @@ the start of a sample is:
 - Byte 0xFF at a multiple of 4: this is the end of the data in this block.
 
 A 0xFF byte at the start of a field in a sample shows that a power loss cut
-the sample. The decoder stops there.
+the sample. The decoder stops there. A cut in the absolute bytes of the last
+field (pressure) is not visible to the decoder, because 0xFF is a valid
+absolute byte. Thus the reader does not use the last sample of a block from
+an earlier boot session when its pressure is an escape with 0xFF as the high
+byte. A real pressure never has that value, only the missing sentinel.
 
 ### Fields
 

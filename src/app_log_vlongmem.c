@@ -23,6 +23,9 @@
 #include "app_config.h"
 #include "app_log_vlongmem_codec.h"
 #include "app_log_vlongmem_time.h"
+#if APP_VLONGMEM_FAKE_DATA
+#include "app_log_vlongmem_fake.h"
+#endif
 #include "ruuvi_driver_error.h"
 #include "ruuvi_driver_sensor.h"
 #include "ruuvi_interface_flash.h"
@@ -52,6 +55,13 @@
 #define VLM_PENDING_MAX    ((APP_VLONGMEM_FLUSH_SAMPLES * VLMC_MAX_SAMPLE_BYTES) + 4U)
 
 #define ROUND_UP4(x) (((x) + 3U) & ~3U)
+
+/** @brief Uptime bias: the synthetic year of the fake data build is before the boot. */
+#if APP_VLONGMEM_FAKE_DATA
+#   define VLM_UPTIME_BIAS_MS ((uint64_t) APP_VLONGMEM_FAKE_SAMPLES * VLM_INTERVAL_MS)
+#else
+#   define VLM_UPTIME_BIAS_MS (0ULL)
+#endif
 
 /** @brief Block header, the first 32 bytes of each page. Erased flash = 0xFF. */
 typedef struct
@@ -156,23 +166,23 @@ static uint32_t uptime_now_s (void)
 
         if ( (b >= a) && ( (b - a) < 1000ULL))
         {
-            return (uint32_t) (b / 1000ULL);
+            return (uint32_t) ( (b + VLM_UPTIME_BIAS_MS) / 1000ULL);
         }
 
         a = b;
     }
 
-    return (uint32_t) (a / 1000ULL);
+    return (uint32_t) ( (a + VLM_UPTIME_BIAS_MS) / 1000ULL);
 }
 
 static const vlm_header_t * page_header (const uint32_t page)
 {
-    return (const vlm_header_t *) page_addr (page);
+    return (const vlm_header_t *) (uintptr_t) page_addr (page);
 }
 
 static const uint8_t * page_data (const uint32_t page)
 {
-    return (const uint8_t *) (page_addr (page) + VLM_HEADER_SIZE);
+    return (const uint8_t *) (uintptr_t) (page_addr (page) + VLM_HEADER_SIZE);
 }
 
 static bool header_valid (const vlm_header_t * const p_h)
@@ -380,6 +390,25 @@ rd_status_t app_log_init (void)
     m_block_open = false;
     m_grid_started = false;
     m_initialized = true;
+#if APP_VLONGMEM_FAKE_DATA
+
+    if (0U == max_seq)
+    {
+        // Empty ring: write the synthetic year. The live grid continues after it.
+        LOGI ("vlongmem: fake data\r\n");
+
+        for (uint32_t slot = 0; slot < APP_VLONGMEM_FAKE_SAMPLES; slot++)
+        {
+            vlmc_sample_t s;
+            vlmf_sample (slot, &s);
+            err_code |= append_sample (&s, slot * APP_LOG_INTERVAL_S);
+        }
+
+        m_grid_started = true;
+        m_next_sample_ms = VLM_UPTIME_BIAS_MS;
+    }
+
+#endif
     char msg[96];
     snprintf (msg, sizeof (msg), "vlongmem: boot %lu, %lu pages, next block %lu\r\n",
               (unsigned long) m_boot_id, (unsigned long) VLM_PAGES, (unsigned long) m_next_seq);
@@ -396,7 +425,7 @@ rd_status_t app_log_process (const rd_sensor_data_t * const sample)
         return RD_ERROR_INVALID_STATE;
     }
 
-    const uint64_t ts = sample->timestamp_ms;
+    const uint64_t ts = sample->timestamp_ms + VLM_UPTIME_BIAS_MS;
 
     if (!m_grid_started)
     {
@@ -442,8 +471,20 @@ void app_log_time_set (const uint32_t epoch_now_s)
     if (!m_initialized) { return; }
 
     const uint32_t uptime_s = uptime_now_s();
+    // The oldest session with data in the ring: its anchors must stay.
+    uint32_t oldest_boot_id = m_boot_id;
 
-    if (vlmt_anchor_add (&m_anchors, m_boot_id, uptime_s, epoch_now_s))
+    for (uint32_t page = 0; page < VLM_PAGES; page++)
+    {
+        const vlm_header_t * const p_h = page_header (page);
+
+        if (header_valid (p_h) && (p_h->boot_id < oldest_boot_id))
+        {
+            oldest_boot_id = p_h->boot_id;
+        }
+    }
+
+    if (vlmt_anchor_add (&m_anchors, m_boot_id, uptime_s, epoch_now_s, oldest_boot_id))
     {
         while (rt_flash_busy()) { ri_yield(); }
 
@@ -528,6 +569,33 @@ static bool next_block (app_log_read_state_t * const p_rs)
 }
 
 /**
+ * @brief Find if the sample at pos is the last one in the block and can be cut.
+ *
+ * A power loss during a write stops at a word boundary. The bytes after it
+ * are 0xFF. A cut in a field before the last field makes the next field
+ * start with 0xFF, and the decoder stops. A cut in the absolute bytes of an
+ * escape in the last field (pressure) decodes as a value, because 0xFF is a
+ * valid absolute byte. Thus the last sample of a block from an earlier
+ * session is not used when its pressure is an escape with 0xFF as the high
+ * byte. A real pressure never has that value (more than 115 kPa), only the
+ * missing sentinel does. That loss is one missing marker at most.
+ */
+static bool last_sample_is_cut (const uint8_t * const p_flash, const uint16_t pos,
+                                const size_t n, const uint16_t flash_len)
+{
+    uint16_t next = (uint16_t) (pos + n);
+
+    if (0U != (next % 4U)) { next = (uint16_t) ROUND_UP4 (next); }
+
+    if ( (next < flash_len) && (VLMC_END != p_flash[next])) { return false; }
+
+    // The last field is an escape when the sample ends with three escape bytes.
+    return (n >= 3U)
+           && (VLMC_ESCAPE == p_flash[pos + n - 3U])
+           && (VLMC_END == p_flash[pos + n - 1U]);
+}
+
+/**
  * @brief Decode the next sample of the current block.
  *
  * @return true if a sample was decoded, false when the block has no more samples.
@@ -558,6 +626,13 @@ static bool decode_next (app_log_read_state_t * const p_rs, vlmc_sample_t * cons
                 if (!is_open_head) { return false; }
 
                 pos = flash_len;
+            }
+            else if ( (p_rs->block_boot_id != m_boot_id)
+                      && last_sample_is_cut (p_flash, pos, n, flash_len))
+            {
+                // A power loss in an earlier session cut this sample. Its
+                // absolute bytes are erased flash, thus its value is not known.
+                return false;
             }
             else
             {

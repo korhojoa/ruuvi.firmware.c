@@ -10,9 +10,24 @@
  * through the standard GATT log-read protocol.
  */
 
-#define APP_FW_VARIANT "+vlongmem"
-
 #define APP_VLONGMEM_ENABLED (1U)
+
+/**
+ * @brief Test build: at the first boot with an empty ring, the firmware
+ * writes one year of synthetic data (app_log_vlongmem_fake.c) into the
+ * ring. The uptime gets a bias of one year, thus the live samples continue
+ * after the synthetic year. Variant "vlongmemfake" sets this.
+ */
+#ifndef APP_VLONGMEM_FAKE_DATA
+#   define APP_VLONGMEM_FAKE_DATA (0U)
+#endif
+
+#if APP_VLONGMEM_FAKE_DATA
+#   define APP_FW_VARIANT "+vlongmemfake"
+#   define APP_VLONGMEM_FAKE_SAMPLES (365U * 144U)
+#else
+#   define APP_FW_VARIANT "+vlongmem"
+#endif
 
 /** @brief Log interval in seconds. The samples are on a fixed grid of this period. */
 #define APP_LOG_INTERVAL_S (10U * 60U)

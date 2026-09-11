@@ -38,9 +38,45 @@ static void remove_anchor (vlmt_anchors_t * const p_list, const uint32_t idx)
     p_list->count--;
 }
 
-/** @brief Remove all anchors of the oldest session that is not boot_id. Returns false if there is none. */
-static bool remove_oldest_other_session (vlmt_anchors_t * const p_list, const uint32_t boot_id)
+/** @brief Remove all anchors of session victim_id. */
+static void remove_session (vlmt_anchors_t * const p_list, const uint32_t victim_id)
 {
+    uint32_t ii = 0;
+
+    while (ii < p_list->count)
+    {
+        if (p_list->anchors[ii].boot_id == victim_id) { remove_anchor (p_list, ii); }
+        else { ii++; }
+    }
+}
+
+/**
+ * @brief Make space: remove the sessions with no data in the ring, or the
+ * oldest session that is not boot_id. Returns false if there is none.
+ */
+static bool make_space (vlmt_anchors_t * const p_list, const uint32_t boot_id,
+                        const uint32_t oldest_boot_id)
+{
+    bool removed = false;
+    uint32_t ii = 0;
+
+    while (ii < p_list->count)
+    {
+        const uint32_t id = p_list->anchors[ii].boot_id;
+
+        if ( (id < oldest_boot_id) && (id != boot_id))
+        {
+            remove_session (p_list, id);
+            removed = true;
+        }
+        else
+        {
+            ii++;
+        }
+    }
+
+    if (removed) { return true; }
+
     uint32_t victim = 0;
 
     while ( (victim < p_list->count) && (p_list->anchors[victim].boot_id == boot_id))
@@ -50,15 +86,7 @@ static bool remove_oldest_other_session (vlmt_anchors_t * const p_list, const ui
 
     if (victim >= p_list->count) { return false; }
 
-    const uint32_t victim_id = p_list->anchors[victim].boot_id;
-    uint32_t ii = 0;
-
-    while (ii < p_list->count)
-    {
-        if (p_list->anchors[ii].boot_id == victim_id) { remove_anchor (p_list, ii); }
-        else { ii++; }
-    }
-
+    remove_session (p_list, p_list->anchors[victim].boot_id);
     return true;
 }
 
@@ -76,7 +104,8 @@ static bool rate_error_ppm (const vlmt_anchor_t * const p_a, const vlmt_anchor_t
 }
 
 bool vlmt_anchor_add (vlmt_anchors_t * const p_list, const uint32_t boot_id,
-                      const uint32_t uptime_s, const uint32_t epoch_s)
+                      const uint32_t uptime_s, const uint32_t epoch_s,
+                      const uint32_t oldest_boot_id)
 {
     if (epoch_s < VLMT_MIN_EPOCH_S) { return false; }
 
@@ -115,7 +144,7 @@ bool vlmt_anchor_add (vlmt_anchors_t * const p_list, const uint32_t boot_id,
         // Keep the anchors of the session together: put the new one after the last.
         if (p_list->count >= VLMT_MAX_ANCHORS)
         {
-            if (!remove_oldest_other_session (p_list, boot_id)) { return false; }
+            if (!make_space (p_list, boot_id, oldest_boot_id)) { return false; }
 
             session_range (p_list, boot_id, &first, &last);
         }
@@ -131,7 +160,7 @@ bool vlmt_anchor_add (vlmt_anchors_t * const p_list, const uint32_t boot_id,
     }
 
     // First anchor of this session.
-    if ( (p_list->count >= VLMT_MAX_ANCHORS) && !remove_oldest_other_session (p_list, boot_id))
+    if ( (p_list->count >= VLMT_MAX_ANCHORS) && !make_space (p_list, boot_id, oldest_boot_id))
     {
         return false;
     }

@@ -172,12 +172,13 @@ before it. With one connection at the start and one at the end, the error in
 the period between them is some seconds. With one anchor, the time is the
 anchor offset and the drift is not corrected.
 
-The tag keeps a maximum of 16 anchors, a maximum of 4 for each session. A
-connection less than 1 hour after the last anchor replaces that anchor. A
-phone time that shows a rate error of more than 1 % against the first anchor
-of the session is not accepted, and a phone time before 2020 is not
-accepted. A session without anchors uses the header offset. Refer to
-`FORMAT.md` for the record layout.
+The tag keeps a maximum of 32 anchors, a maximum of 4 for each session. When
+the list is full, the anchors of sessions with no data in the ring go first,
+then the oldest other session. A connection less than 1 hour after the last
+anchor replaces that anchor. A phone time that shows a rate error of more
+than 1 % against the first anchor of the session is not accepted, and a
+phone time before 2020 is not accepted. A session without anchors uses the
+header offset. Refer to `FORMAT.md` for the record layout.
 
 A reboot always starts a new block and a new session. The gap between the
 last sample before the reboot and the first sample after the reboot is not
@@ -218,6 +219,46 @@ Note: the CI workflow gets the SDK and the nRF command line tools from
 `storage.ruuvi.com`. That name did not resolve in DNS when the image was
 made. The image gets the same versions from the Nordic URLs.
 
+## Tests
+
+Two test levels operate on the host, without hardware:
+
+- **Unit tests** of the codec and the time anchors:
+  `scripts/test-vlongmem-codec.sh`. The tests are in `test/`, they also
+  operate with ceedling.
+- **Simulation** of the full log module: `scripts/sim-vlongmem.sh [days]`.
+  The real `app_log_vlongmem.c` operates against a fake nRF52 flash in RAM
+  with the rules of the real flash (erase sets 0xFF, a write only clears
+  bits, two writes for each word between erases, word alignment). The
+  simulation drives the module with heartbeats each 2.57 s for 800 days by
+  default, with a tag clock that is 50 ppm slow, a phone connection each 30
+  days, a 25 min gap before each connection, a clean reboot or a power cut
+  in a flash write each 100 days, and windowed reads as the apps do them.
+  After each connection it reads the full log and compares each sample and
+  its time with the truth. The build uses AddressSanitizer and
+  UndefinedBehaviorSanitizer. A 2000-day run has five ring wraps.
+
+The simulation does not cover the stack use on the target, the SoftDevice
+flash timing, or the radio. Those need a tag.
+
+## Fake data build
+
+The variant `vlongmemfake` is for tests of the apps. At the first boot with
+an empty ring, the firmware writes one year of synthetic data
+(`src/app_log_vlongmem_fake.c`: yearly and daily cycles, a transport event
+with fast changes, a storm, some missing readings) into the ring. The uptime
+gets a bias of one year, thus the live samples continue after the synthetic
+year. The device information shows the variant as `+vlongmemfake`.
+
+```
+scripts/podman/build.sh VARIANTS=vlongmemfake
+```
+
+After the DFU, connect one time with the app. That connection gives the
+synthetic year its date. A factory reset with the button erases the ring,
+and the next boot writes the synthetic year again. The write takes some
+seconds at the boot.
+
 ## Differences from the handoff specification
 
 - The interval is 10 min, not 5 min, and there are three fields, not one.
@@ -233,6 +274,8 @@ made. The image gets the same versions from the Nordic URLs.
 
 ## Open items
 
+- A test on a tag: a log read with Ruuvi Station, the flash timing with the
+  SoftDevice, the stack use.
 - App changes for a read of a full year, a later decision.
 - Samples in a long GATT transfer are recorded as missing. A sample from
   the transfer loop would close that gap.

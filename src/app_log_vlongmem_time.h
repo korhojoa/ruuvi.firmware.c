@@ -20,7 +20,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define VLMT_MAX_ANCHORS          (16U)   //!< Total anchors in the persistent record.
+#define VLMT_MAX_ANCHORS          (32U)   //!< Total anchors in the persistent record.
 #define VLMT_ANCHORS_PER_SESSION  (4U)    //!< Maximum anchors of one boot session.
 #define VLMT_MIN_ANCHOR_SPACING_S (3600U) //!< A new anchor closer than this replaces the last one.
 #define VLMT_MAX_RATE_ERROR_PPM   (10000) //!< 1 %, more than this is a wrong phone clock.
@@ -51,12 +51,16 @@ typedef struct
  * more than VLMT_MAX_RATE_ERROR_PPM against the first anchor of the session
  * is not added. When the session has VLMT_ANCHORS_PER_SESSION anchors, the
  * new anchor replaces the last one. When the list is full, the anchors of
- * the oldest other session are removed.
+ * the sessions before oldest_boot_id (sessions with no data in the ring)
+ * are removed first, then the anchors of the oldest other session.
  *
+ * @param[in] oldest_boot_id The oldest boot session with data in the ring,
+ *                           or 0 when not known.
  * @return true if the list changed and must be written to flash.
  */
 bool vlmt_anchor_add (vlmt_anchors_t * const p_list, const uint32_t boot_id,
-                      const uint32_t uptime_s, const uint32_t epoch_s);
+                      const uint32_t uptime_s, const uint32_t epoch_s,
+                      const uint32_t oldest_boot_id);
 
 /**
  * @brief Calculate the epoch time of a tag uptime in a boot session.

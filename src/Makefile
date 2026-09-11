@@ -26,7 +26,8 @@
 #   make BOARDS="kaarle" VARIANTS="longlife"          # Build kaarle with longlife only
 #
 # Available boards: ruuvitag_b, pca10040, kaarle, kalervo, keijo
-# Available variants: default, test, longmem, longlife, uuid, vlongmem
+# Available variants: default, test, longmem, longlife, uuid, vlongmem,
+#   vlongmemfake (vlongmem with one year of synthetic data, not built by default)
 
 #  For example v3.31.1
 TAG := $(shell git describe --tags --exact-match)
@@ -49,6 +50,7 @@ MODE_longmem   = -DAPPLICATION_MODE_LONGMEM
 MODE_longlife  = -DAPPLICATION_MODE_LONGLIFE
 MODE_uuid      = -DAPPLICATION_MODE_UUID
 MODE_vlongmem   = -DAPPLICATION_MODE_VLONGMEM
+MODE_vlongmemfake = -DAPPLICATION_MODE_VLONGMEM -DAPP_VLONGMEM_FAKE_DATA=1
 
 # Variant to debug flag mapping
 DEBUG_default  = -DNDEBUG
@@ -57,6 +59,7 @@ DEBUG_longmem  = -DNDEBUG
 DEBUG_longlife = -DNDEBUG
 DEBUG_uuid     = -DNDEBUG
 DEBUG_vlongmem  = -DNDEBUG
+DEBUG_vlongmemfake = -DNDEBUG
 
 # Variant to optimization flag mapping (release builds optimized, debug builds with debug info)
 OPT_default    = -Os -g3
@@ -65,6 +68,7 @@ OPT_longmem    = -Os
 OPT_longlife   = -Os
 OPT_uuid       = -Os
 OPT_vlongmem    = -Os -g3
+OPT_vlongmemfake = -Os -g3
 
 # Variant to extra flags mapping (test variant runs tests)
 EXTRA_test     = RUN_TESTS=-DRUUVI_RUN_TESTS
@@ -93,14 +97,15 @@ $(1):
 			longlife) debug="$(DEBUG_longlife)"; mode="$(MODE_longlife)"; opt="$(OPT_longlife)"; extra="" ;; \
 			uuid)     debug="$(DEBUG_uuid)";     mode="$(MODE_uuid)";     opt="$(OPT_uuid)";     extra="" ;; \
 			vlongmem)  debug="$(DEBUG_vlongmem)";  mode="$(MODE_vlongmem)";  opt="$(OPT_vlongmem)";  extra="" ;; \
+			vlongmemfake) debug="$(DEBUG_vlongmemfake)"; mode="$(MODE_vlongmemfake)"; opt="$(OPT_vlongmemfake)"; extra="" ;; \
 			*) echo "Unknown variant: $$$$variant"; exit 1 ;; \
 		esac; \
 		$$(MAKE) -C targets/$(1)/armgcc clean 2>/dev/null || true; \
-		echo "  make -C targets/$(1)/armgcc FW_VERSION=-DAPP_FW_VERSION=$${VERSION} DEBUG=$$$$debug MODE=$$$$mode OPT=\"$$$$opt\" $$$$extra"; \
+		echo "  make -C targets/$(1)/armgcc FW_VERSION=-DAPP_FW_VERSION=$${VERSION} DEBUG=$$$$debug MODE=\"$$$$mode\" OPT=\"$$$$opt\" $$$$extra"; \
 		$$(MAKE) -C targets/$(1)/armgcc \
 			FW_VERSION=-DAPP_FW_VERSION=$${VERSION} \
 			DEBUG=$$$$debug \
-			MODE=$$$$mode \
+			MODE="$$$$mode" \
 			OPT="$$$$opt" \
 			$$$$extra; \
 		targets/$(1)/armgcc/package.sh -n ruuvifw_$$$$variant; \
