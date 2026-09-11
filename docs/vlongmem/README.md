@@ -248,6 +248,27 @@ flash timing, or the radio. Those need a tag.
   full ring. The tag accepts one connection: a phone app that is connected
   to the tag blocks the tool.
 
+### Measured on a RuuviTag B with the vlongmemfake build
+
+The tag got the build through DFU with nRF Connect. The tool on a Linux
+host with BlueZ did the reads.
+
+| Read | Result |
+|---|---|
+| 10 days, as the apps request | 1440 timestamps on the 600 s grid, 4320 messages in 16.3 s, 265 messages a second |
+| 400 days, the full ring | 52551 timestamps, one year, 157601 messages in 122 s, 1291 messages a second |
+| Values | all 52549 synthetic samples equal to the generator, 11 slots with all fields missing by design are not sent |
+| End | the end message came in both reads, no timeout |
+
+The transfer rate increases in the first minute when the connection
+parameters change. A full year at 10 min is approximately two minutes of
+transfer on this host. A phone is slower, the apps give one notification at
+a time to the application code.
+
+Note: the 10-day read with the tool gave the first timestamps 2 s apart from
+the 400-day read. A connection less than 1 hour after the last anchor
+replaces the anchor, and the uptime has a resolution of 1 s.
+
 ## Fake data build
 
 The variant `vlongmemfake` is for tests of the apps. At the first boot with
@@ -281,8 +302,10 @@ seconds at the boot.
 
 ## Open items
 
-- A test on a tag: a log read with Ruuvi Station, the flash timing with the
-  SoftDevice, the stack use.
+- A sync with Ruuvi Station on a phone. The reads with the tool on a Linux
+  host are complete, refer to "Tests".
+- A long test on a tag for the battery life and the flash timing over
+  months.
 - App changes for a read of a full year, a later decision.
 - Samples in a long GATT transfer are recorded as missing. A sample from
   the transfer loop would close that gap.

@@ -208,7 +208,9 @@ class LogReader:
             print("unexpected message: %s" % data.hex())
             return
         ts, raw = struct.unpack(">Ii", payload)
-        value = None if raw == -1 else raw * FIELD_SCALE[src]
+        # The Android app reads 0xFFFFFFFF as "no value" for humidity and
+        # pressure. For temperature -1 is a valid -0.01 deg C.
+        value = None if (raw == -1 and src != RE_TEMPERATURE) else raw * FIELD_SCALE[src]
         self.samples.setdefault(ts, {})[FIELD_NAMES[src]] = value
         if self.messages % 2000 == 0:
             el = time.monotonic() - self.t_request
