@@ -166,11 +166,14 @@ Typical values for one year:
 
 The anchors correct this. When a session has two or more anchors, the time
 of a sample is a linear interpolation between the two nearest anchors, or an
-extrapolation with the rate of the nearest pair. The times are calculated
-when the log is read, thus a later connection also corrects the samples
-before it. With one connection at the start and one at the end, the error in
-the period between them is some seconds. With one anchor, the time is the
-anchor offset and the drift is not corrected.
+extrapolation with the rate of the nearest pair. The rate of a pair has an
+error of some seconds divided by the span of the pair. Thus the
+extrapolation with the rate goes to a maximum of 20 times the span of the
+pair, and after that the offset of the nearest anchor is used. The times are
+calculated when the log is read, thus a later connection also corrects the
+samples before it. With one connection at the start and one at the end, the
+error in the period between them is some seconds. With one anchor, the time
+is the anchor offset and the drift is not corrected.
 
 The tag keeps a maximum of 32 anchors, a maximum of 4 for each session. When
 the list is full, the anchors of sessions with no data in the ring go first,
@@ -197,6 +200,13 @@ synchronization. The app connects through GATT and does the log read. A
 button press on the tag is not necessary for the log read, the same as with
 the standard firmware. The first connection after a battery change also sets
 the absolute time of the log, refer to "Time".
+
+The Android app reads the firmware revision from the Device Information
+Service and does the log read only when the revision is a semantic version
+of 3.28.12 or newer. The revision is `Ruuvi FW <git tag or hash>+<variant>`.
+Thus a build for the apps must come from a tagged commit, for example
+`v3.34.1-vlongmem.1`. A build from an untagged commit has a hash as the
+revision, and the app disconnects without a log read.
 
 ## Build
 

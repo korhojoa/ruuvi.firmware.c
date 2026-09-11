@@ -25,6 +25,15 @@
 #define VLMT_MIN_ANCHOR_SPACING_S (3600U) //!< A new anchor closer than this replaces the last one.
 #define VLMT_MAX_RATE_ERROR_PPM   (10000) //!< 1 %, more than this is a wrong phone clock.
 #define VLMT_MIN_EPOCH_S          (1577836800U) //!< 2020-01-01, a phone clock before this is not set.
+/**
+ * @brief Maximum extrapolation as a multiple of the span of the anchor pair.
+ *
+ * The rate of a pair has an error of some seconds divided by the span. An
+ * extrapolation of more than this multiple uses the offset of the nearest
+ * anchor, not the rate. With 20, an error of 3 s in a pair gives a maximum
+ * error of 60 s at the limit.
+ */
+#define VLMT_MAX_EXTRAPOLATION    (20)
 #define VLMT_NO_OFFSET            (0xFFFFFFFFU) //!< No header offset available.
 
 /** @brief One anchor: the phone time at a known tag uptime. */
@@ -67,8 +76,10 @@ bool vlmt_anchor_add (vlmt_anchors_t * const p_list, const uint32_t boot_id,
  *
  * With two or more anchors for the session, the function interpolates
  * between the two nearest anchors, or extrapolates with the rate of the
- * nearest pair. With one anchor, the function uses its offset. With no
- * anchor, the function uses header_offset_s.
+ * nearest pair. The extrapolation with the rate is limited to
+ * VLMT_MAX_EXTRAPOLATION times the span of the pair, after that the offset
+ * of the nearest anchor is used. With one anchor, the function uses its
+ * offset. With no anchor, the function uses header_offset_s.
  *
  * @param[in] header_offset_s Offset from the block header, or VLMT_NO_OFFSET.
  * @param[out] p_epoch_s Result.

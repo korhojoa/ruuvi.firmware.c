@@ -51,6 +51,7 @@ int main(void) {
     T(test_one_anchor_is_an_offset)
     T(test_anchor_of_other_session_is_not_used)
     T(test_two_anchors_correct_a_slow_clock)
+    T(test_extrapolation_far_from_a_short_pair_uses_the_offset)
     T(test_three_anchors_use_the_nearest_segment)
     T(test_close_anchor_replaces_the_last)
     T(test_anchor_not_after_the_last_is_rejected)

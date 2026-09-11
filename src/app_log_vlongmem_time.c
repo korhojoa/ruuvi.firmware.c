@@ -206,13 +206,19 @@ bool vlmt_epoch_get (const vlmt_anchors_t * const p_list, const uint32_t boot_id
     const int64_t du = (int64_t) p_b->uptime_s - (int64_t) p_a->uptime_s;
     const int64_t de = (int64_t) p_b->epoch_s - (int64_t) p_a->epoch_s;
     const int64_t d = (int64_t) uptime_s - (int64_t) p_a->uptime_s;
-    int64_t epoch = (int64_t) p_a->epoch_s + d;
+    // Distance outside the pair, 0 when in the pair.
+    const int64_t outside = (d < 0) ? -d : ( (d > du) ? (d - du) : 0);
 
-    if (du > 0)
+    if ( (du <= 0) || (outside > (VLMT_MAX_EXTRAPOLATION * du)))
     {
-        epoch = (int64_t) p_a->epoch_s + ( (d * de) / du);
+        // The rate of the pair is not accurate at this distance. Use the
+        // offset of the nearest anchor.
+        const vlmt_anchor_t * const p_near = (d < 0) ? p_a : p_b;
+        *p_epoch_s = (uint32_t) ( (int64_t) p_near->epoch_s
+                                  + ( (int64_t) uptime_s - (int64_t) p_near->uptime_s));
+        return true;
     }
 
-    *p_epoch_s = (uint32_t) epoch;
+    *p_epoch_s = (uint32_t) ( (int64_t) p_a->epoch_s + ( (d * de) / du));
     return true;
 }

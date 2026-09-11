@@ -75,6 +75,26 @@ void test_two_anchors_correct_a_slow_clock (void)
     TEST_ASSERT_UINT32_WITHIN (2, EPOCH0 + (2U * real_year), e);
 }
 
+void test_extrapolation_far_from_a_short_pair_uses_the_offset (void)
+{
+    uint32_t e = 0;
+    const uint32_t year = 365U * DAY;
+    // Two anchors 2 h apart, the phone clock 40 s ahead at the second: a
+    // rate error of 0.55 %, which is 48 h in one year of extrapolation.
+    TEST_ASSERT_TRUE (add (1, year, EPOCH0 + year));
+    TEST_ASSERT_TRUE (add (1, year + 7200U, EPOCH0 + year + 7240U));
+    TEST_ASSERT_EQUAL_UINT32 (2, list.count);
+    // One year before: the offset of the first anchor, not the rate.
+    TEST_ASSERT_TRUE (vlmt_epoch_get (&list, 1, 0, VLMT_NO_OFFSET, &e));
+    TEST_ASSERT_EQUAL_UINT32 (EPOCH0, e);
+    // In the limit (20 times the span): the rate.
+    TEST_ASSERT_TRUE (vlmt_epoch_get (&list, 1, year - 36000U, VLMT_NO_OFFSET, &e));
+    TEST_ASSERT_EQUAL_UINT32 (EPOCH0 + year - 36000U - 200U, e);
+    // After the pair, far: the offset of the second anchor.
+    TEST_ASSERT_TRUE (vlmt_epoch_get (&list, 1, 2U * year, VLMT_NO_OFFSET, &e));
+    TEST_ASSERT_EQUAL_UINT32 (EPOCH0 + (2U * year) + 40U, e);
+}
+
 void test_three_anchors_use_the_nearest_segment (void)
 {
     uint32_t e = 0;
