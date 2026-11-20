@@ -49,3 +49,10 @@ RUN wget -q -O /tmp/nRF5_SDK_15.3.0_59ac345.zip \
 # link (git ignores it).
 RUN git config --system --add safe.directory '*'
 WORKDIR /work/src
+
+# Host tests and formatting run in the same image. Keep this layer after the
+# SDK so changes to the test tools do not download the SDK or compiler again.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc libc6-dev ruby ruby-dev astyle \
+    && gem install ceedling -v 1.1.10 --no-document \
+    && rm -rf /var/lib/apt/lists/*

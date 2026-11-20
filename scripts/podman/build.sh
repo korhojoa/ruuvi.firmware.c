@@ -33,6 +33,8 @@ fi
 TTY=()
 if [ -t 0 ]; then TTY=(-it); fi
 
-exec podman run --rm "${TTY[@]}" --userns=keep-id \
+# Rootless container UID 0 maps to the calling user. Keep the image's normal
+# mapping to avoid a separate ID-mapped copy of the SDK and compiler layers.
+exec podman run --rm "${TTY[@]}" --userns=host \
     -v "${ROOT}:/work:Z" -w /work/src \
     "${IMAGE}" "${CMD[@]}"

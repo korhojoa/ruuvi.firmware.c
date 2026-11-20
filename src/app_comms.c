@@ -3,6 +3,7 @@
 #include "app_heartbeat.h"
 #include "app_led.h"
 #include "app_sensor.h"
+#include "app_settings.h"
 #include "app_testing.h"
 #include "ruuvi_boards.h"
 #include "ruuvi_endpoints.h"
@@ -107,7 +108,11 @@ static rd_status_t prepare_mode_change (const mode_changes_t * p_change)
  */
 static uint8_t initial_adv_send_count (void)
 {
+#if APP_VLONGMEM_ENABLED
+    uint16_t num_sends = (app_settings_get().announce_ms * APP_NUM_REPEATS / 100U);
+#else
     uint16_t num_sends = (APP_HEARTBEAT_INTERVAL_MS / 100U);
+#endif
 
     if (0 == num_sends) //-V547
     {
@@ -288,11 +293,28 @@ TESTABLE_STATIC void handle_comms (const ri_comm_xfer_fp_t reply_fp, void * p_da
         err_code |= ri_gatt_params_request (RI_GATT_TURBO, CONN_PARAM_UPDATE_DELAY_MS);
 #endif
         // Parse message type.
-        re_type_t type = raw_message[RE_STANDARD_DESTINATION_INDEX];
+        const uint8_t type = raw_message[RE_STANDARD_DESTINATION_INDEX];
 
         // Route message to proper handler.
         switch (type)
         {
+#if APP_VLONGMEM_ENABLED
+
+            case RE_STANDARD_DESTINATION_SYS_CONFIG:
+                err_code |= app_settings_handle (reply_fp, raw_message, data_len);
+
+                if (!m_mode_ops.switch_to_normal)
+                {
+                    err_code |= ri_adv_tx_interval_set (app_settings_get().announce_ms);
+                }
+                else
+                {
+                    app_comms_bleadv_send_count_set (initial_adv_send_count());
+                }
+
+                break;
+#endif
+
             case RE_ACC_XYZ:
             case RE_ACC_X:
             case RE_ACC_Y:
@@ -584,7 +606,11 @@ TESTABLE_STATIC void comm_mode_change_isr (void * const p_context)
     if (p_change->switch_to_normal)
     {
         app_comms_bleadv_send_count_set (APP_NUM_REPEATS);
+#if APP_VLONGMEM_ENABLED
+        ri_adv_tx_interval_set (app_settings_get().announce_ms);
+#else
         ri_adv_tx_interval_set (APP_BLE_INTERVAL_MS);
+#endif
         p_change->switch_to_normal = 0;
     }
 

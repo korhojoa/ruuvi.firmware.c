@@ -5,7 +5,7 @@
  * @file application_mode_vlongmem.h
  * @brief Environmental logger for one year. Refer to docs/vlongmem/README.md.
  *
- * The firmware records temperature, humidity and pressure each 10 minutes
+ * By default, the firmware records temperature, humidity and pressure each 10 minutes
  * into a raw flash ring buffer (app_log_vlongmem.c). It sends the history
  * through the standard GATT log-read protocol.
  */

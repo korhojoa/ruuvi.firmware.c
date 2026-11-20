@@ -11,13 +11,19 @@ apps can read the history, in the limits given in "Client findings".
 | Item | Decision |
 |---|---|
 | Fields | temperature, humidity, pressure |
-| Interval | 10 min |
+| Interval | 10 min by default, configurable through Bluetooth |
 | Resolution in flash | 0.01 deg C, 0.01 %RH, 1 Pa (the same as the wire format, thus no loss of data) |
 | Ring behavior | ring-wrap, the oldest block is erased when the ring is full |
-| Write policy | samples are kept in RAM and written after 16 samples (a maximum of 160 min of data is lost at a sudden power loss) |
+| Write policy | samples stay in RAM until 16 samples are ready, at most 160 min at the default interval |
 | Host access | standard Nordic UART Service log-read protocol only, no custom reader |
 | Apps | official Ruuvi Station, app changes are a later decision |
 | Gateway | not applicable, the gateway cannot read tag logs |
+
+The advertisement and storage intervals can change through Bluetooth.
+The tag saves both settings across restarts.
+Refer to [Interval settings](SETTINGS.md) for the limits, protocol and host helper.
+Older blocks keep their original storage interval and timestamps.
+Shorter storage intervals reduce the retention period.
 
 ## Measured numbers
 
@@ -137,8 +143,8 @@ to 50000 Pa.
 
 The tag has no clock. The time of each sample is implicit. The block header
 holds the uptime of the first sample of the block. The samples are on a fixed
-grid of 10 min from that point. A slot without a sample (for example, during
-a GATT transfer that blocks the scheduler) is written as a missing marker.
+grid of the configured storage interval from that point. A slot without a sample
+(for example, during a GATT transfer that blocks the scheduler) is written as a missing marker.
 Thus the grid does not move.
 
 The phone gives the absolute time. Each log-read request has the current
@@ -189,10 +195,11 @@ known.
 
 ## Connection
 
-The variant keeps the standard radio settings of the `default` variant. The
+By default, the variant uses the radio settings of the `default` variant. The
 tag sends a connectable advertisement each 1285 ms (`APP_BLE_INTERVAL_MS`)
-and reads the sensors each 2570 ms (`APP_NUM_REPEATS` 2). The advertisement
-has the usual sensor data. Thus the tag shows in the scan list of Ruuvi
+and reads the sensors each 2570 ms (`APP_NUM_REPEATS` 2). A saved interval
+replaces this default. The sensor interval is twice the advertisement interval.
+The advertisement has the usual sensor data. Thus the tag shows in the scan list of Ruuvi
 Station and nRF Connect the same as a standard tag.
 
 To read the history, open the sensor in Ruuvi Station and start the history
@@ -225,6 +232,10 @@ standard Ruuvi bootloader. The full hex is for a wired programmer. The
 bootloader and the SoftDevice do not change, thus a DFU back to the standard
 firmware is possible.
 
+The bootloader's temporary update image can overwrite the vlongmem ring.
+Format compatibility does not preserve the stored history during an update.
+Refer to [Update compatibility](UPDATE.md) before an update of a tag with stored measurements.
+
 Note: the CI workflow gets the SDK and the nRF command line tools from
 `storage.ruuvi.com`. That name did not resolve in DNS when the image was
 made. The image gets the same versions from the Nordic URLs.
@@ -247,6 +258,9 @@ Two test levels operate on the host, without hardware:
   After each connection it reads the full log and compares each sample and
   its time with the truth. The build uses AddressSanitizer and
   UndefinedBehaviorSanitizer. A 2000-day run has five ring wraps.
+
+  `scripts/sim-vlongmem.sh --settings` checks interval changes, mixed-interval
+  history, restart persistence, invalid records and flash failures.
 
 The simulation does not cover the stack use on the target, the SoftDevice
 flash timing, or the radio. Those need a tag.
@@ -323,5 +337,5 @@ seconds at the boot.
 - App changes for a read of a full year, a later decision.
 - Samples in a long GATT transfer are recorded as missing. A sample from
   the transfer loop would close that gap.
-- Power: the variant keeps the standard advertisement rate. A slower
-  advertisement rate and no accelerometer would increase the battery life.
+- Power: the default advertisement rate stays the same. A longer interval
+  reduces radio activity and sensor reads. Battery savings need measurement.

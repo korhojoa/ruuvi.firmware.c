@@ -32,7 +32,7 @@ full, page `seq % 46` is erased before the next block is written.
 | 24 | 8 | reserved | 0xFF |
 
 A header is valid when the magic and the version are correct and `seq` is
-not 0 and not 0xFFFFFFFF.
+not 0 and not 0xFFFFFFFF. The sample interval must not be zero.
 
 The field `epoch_offset_s` is the only field that is written after the
 header. It is 0xFFFFFFFF until a phone does a log read. Then the offset of
@@ -73,6 +73,22 @@ uptime `u` in a session is:
 - With no anchor: the header offset, as given above.
 
 The rules for a new anchor are in the header file.
+
+## Interval settings record
+
+The intervals are in the FDS settings area, file 0xF0, record 0x03.
+The record has 12 bytes. The integers are little-endian.
+
+| Offset | Size | Field | Notes |
+| --- | --- | --- | --- |
+| 0 | 4 | magic | 0x314D4C56, version 1 |
+| 4 | 4 | announce_ms | advertisement interval, 100 to 10000 ms |
+| 8 | 4 | storage_s | storage interval, 1 to 65535 s |
+
+The storage interval must be at least twice the advertisement interval.
+A new storage interval starts a new block. Older headers do not change.
+A missing or invalid record uses the defaults.
+Refer to [Interval settings](SETTINGS.md) for the Bluetooth protocol.
 
 ## Sample data, bytes 32 to 4095 of the page
 
@@ -126,12 +142,13 @@ pressure, this applies to readings below 50000 Pa.
 The samples are on a fixed grid of `interval_s` from `start_uptime_s`. A
 slot without a sample (for example, during a GATT log read that blocks the
 scheduler) is a sample with three missing fields. Thus the later slots keep
-their time. When more than `APP_VLONGMEM_MAX_MISSING` slots (144, one day)
+their time. When more than `APP_VLONGMEM_MAX_MISSING` slots (144, one day at the default interval)
 are missing in sequence, the block is closed. The next sample opens a new
 block with a new `start_uptime_s`.
 
 A block is closed and a new block is opened when the next sample does not
-fit in the page, and at each boot. The gap across a reboot is not known.
+fit in the page, at each boot, and when the storage interval changes.
+The gap across a reboot is not known.
 
 ## Write policy
 

@@ -7,7 +7,7 @@
  * each flash page. The blocks are written through nrf_fstorage. The layout is
  * in docs/vlongmem/FORMAT.md, the design is in docs/vlongmem/README.md.
  *
- * Time: the samples are on a fixed grid of APP_LOG_INTERVAL_S from the start
+ * Time: the samples use the interval in each block header from the start
  * uptime of the block. A slot without a sample is written as a missing
  * marker. Thus the grid does not move. The phone gives the absolute time at
  * each log read. The time is kept as an anchor (app_log_vlongmem_time.c) for
@@ -23,6 +23,7 @@
 #include "app_config.h"
 #include "app_log_vlongmem_codec.h"
 #include "app_log_vlongmem_time.h"
+#include "app_settings.h"
 #if APP_VLONGMEM_FAKE_DATA
 #include "app_log_vlongmem_fake.h"
 #endif
@@ -48,7 +49,7 @@
 #define VLM_HEADER_SIZE    (32U)
 #define VLM_DATA_SIZE      (VLM_PAGE_SIZE - VLM_HEADER_SIZE)
 #define VLM_UNKNOWN        (0xFFFFFFFFU)
-#define VLM_INTERVAL_MS    ((uint64_t) APP_LOG_INTERVAL_S * 1000ULL)
+#define VLM_INTERVAL_MS    ((uint64_t) m_interval_s * 1000ULL)
 #define VLM_MIN_SAMPLE_BYTES (VLMC_FIELDS)
 #define VLM_MAX_SAMPLES_PER_BLOCK (VLM_DATA_SIZE / VLM_MIN_SAMPLE_BYTES)
 /** @brief RAM buffer: the samples at the maximum size, and the word padding. */
@@ -58,7 +59,7 @@
 
 /** @brief Uptime bias: the synthetic year of the fake data build is before the boot. */
 #if APP_VLONGMEM_FAKE_DATA
-#   define VLM_UPTIME_BIAS_MS ((uint64_t) APP_VLONGMEM_FAKE_SAMPLES * VLM_INTERVAL_MS)
+#   define VLM_UPTIME_BIAS_MS ((uint64_t) APP_VLONGMEM_FAKE_SAMPLES * APP_LOG_INTERVAL_S * 1000ULL)
 #else
 #   define VLM_UPTIME_BIAS_MS (0ULL)
 #endif
@@ -79,7 +80,8 @@ typedef struct
 _Static_assert (sizeof (vlm_header_t) == VLM_HEADER_SIZE, "header size");
 _Static_assert (VLM_UNKNOWN == VLMT_NO_OFFSET, "unknown offset value");
 _Static_assert (VLM_PAGES >= 2U, "ring needs at least two pages");
-_Static_assert (0 == (APP_VLONGMEM_REGION_START % RB_FLASH_PAGE_SIZE), "region alignment");
+_Static_assert (0 == (APP_VLONGMEM_REGION_START % RB_FLASH_PAGE_SIZE),
+                "region alignment");
 _Static_assert (0 == (APP_VLONGMEM_REGION_END % RB_FLASH_PAGE_SIZE), "region alignment");
 
 static inline void LOGI (const char * const msg)
@@ -124,6 +126,7 @@ static vlmc_state_t m_enc;
 // Sample grid.
 static bool     m_grid_started;
 static uint64_t m_next_sample_ms;
+static uint16_t m_interval_s = APP_LOG_INTERVAL_S;
 
 // Word-aligned buffer for small writes.
 static uint32_t m_word_buf[VLM_HEADER_SIZE / 4U] __attribute__ ( (aligned (4)));
@@ -189,11 +192,13 @@ static bool header_valid (const vlm_header_t * const p_h)
 {
     return (VLM_MAGIC == p_h->magic)
            && (VLM_FORMAT_VERSION == p_h->version)
+           && (0U != p_h->interval_s)
            && (0U != p_h->seq) && (VLM_UNKNOWN != p_h->seq);
 }
 
 /** @brief Write len bytes (a multiple of 4, from a word-aligned source) and wait. */
-static rd_status_t fs_write (const uint32_t addr, const void * const p_src, const uint32_t len)
+static rd_status_t fs_write (const uint32_t addr, const void * const p_src,
+                             const uint32_t len)
 {
     ret_code_t rc;
     m_fs_error = false;
@@ -248,6 +253,9 @@ static rd_status_t flush (void)
         memset (&m_pending[m_pending_len], 0xFF, padded - m_pending_len);
         err_code |= fs_write (page_addr (m_head_page) + VLM_HEADER_SIZE + m_flash_len,
                               m_pending, padded);
+
+        if (RD_SUCCESS != err_code) { return err_code; }
+
         m_flash_len += padded;
     }
 
@@ -259,7 +267,9 @@ static rd_status_t flush (void)
 static rd_status_t close_block (void)
 {
     rd_status_t err_code = flush();
-    m_block_open = false;
+
+    if (RD_SUCCESS == err_code) { m_block_open = false; }
+
     return err_code;
 }
 
@@ -275,7 +285,7 @@ static rd_status_t open_block (const uint32_t start_uptime_s)
     p_h->boot_id = m_boot_id;
     p_h->start_uptime_s = start_uptime_s;
     p_h->epoch_offset_s = m_epoch_offset_s;
-    p_h->interval_s = (uint16_t) APP_LOG_INTERVAL_S;
+    p_h->interval_s = m_interval_s;
     p_h->version = VLM_FORMAT_VERSION;
     err_code |= fs_write (page_addr (page), m_word_buf, sizeof (vlm_header_t));
     m_head_seq = m_next_seq;
@@ -300,9 +310,19 @@ static rd_status_t append_sample (const vlmc_sample_t * const p_sample,
     rd_status_t err_code = RD_SUCCESS;
     uint8_t tmp[VLMC_MAX_SAMPLE_BYTES];
 
+    // A failed automatic flush must not let the next sample overrun the buffer.
+    if (m_pending_samples >= APP_VLONGMEM_FLUSH_SAMPLES)
+    {
+        err_code = flush();
+
+        if (RD_SUCCESS != err_code) { return err_code; }
+    }
+
     if (!m_block_open)
     {
         err_code |= open_block (slot_uptime_s);
+
+        if (RD_SUCCESS != err_code) { return err_code; }
     }
 
     vlmc_state_t saved = m_enc;
@@ -312,7 +332,13 @@ static rd_status_t append_sample (const vlmc_sample_t * const p_sample,
     {
         m_enc = saved;
         err_code |= close_block();
+
+        if (RD_SUCCESS != err_code) { return err_code; }
+
         err_code |= open_block (slot_uptime_s);
+
+        if (RD_SUCCESS != err_code) { return err_code; }
+
         len = vlmc_encode (&m_enc, p_sample, tmp);
     }
 
@@ -330,7 +356,11 @@ static rd_status_t append_sample (const vlmc_sample_t * const p_sample,
 
 rd_status_t app_log_init (void)
 {
-    rd_status_t err_code = RD_SUCCESS;
+    rd_status_t err_code = app_settings_init();
+
+    if (RD_SUCCESS != err_code) { return err_code; }
+
+    m_interval_s = (uint16_t) app_settings_get().storage_s;
     ret_code_t rc = nrf_fstorage_init (&m_vlongmem_fs, &nrf_fstorage_sd, NULL);
 
     if (NRF_SUCCESS != rc)
@@ -396,6 +426,8 @@ rd_status_t app_log_init (void)
     {
         // Empty ring: write the synthetic year. The live grid continues after it.
         LOGI ("vlongmem: fake data\r\n");
+        const uint16_t live_interval_s = m_interval_s;
+        m_interval_s = APP_LOG_INTERVAL_S;
 
         for (uint32_t slot = 0; slot < APP_VLONGMEM_FAKE_SAMPLES; slot++)
         {
@@ -404,6 +436,8 @@ rd_status_t app_log_init (void)
             err_code |= append_sample (&s, slot * APP_LOG_INTERVAL_S);
         }
 
+        err_code |= close_block();
+        m_interval_s = live_interval_s;
         m_grid_started = true;
         m_next_sample_ms = VLM_UPTIME_BIAS_MS;
     }
@@ -721,15 +755,34 @@ rd_status_t app_log_read (rd_sensor_data_t * const sample,
 
 rd_status_t app_log_config_set (const app_log_config_t * const configuration)
 {
-    (void) configuration;
-    return RD_ERROR_NOT_SUPPORTED;
+    if (NULL == configuration) { return RD_ERROR_NULL; }
+
+    if (0U == configuration->interval_s) { return RD_ERROR_INVALID_PARAM; }
+
+    if (configuration->interval_s == m_interval_s) { return RD_SUCCESS; }
+
+    const rd_status_t status = app_log_flush();
+
+    if (RD_SUCCESS != status) { return status; }
+
+    m_interval_s = configuration->interval_s;
+    m_grid_started = false;
+    return RD_SUCCESS;
+}
+
+rd_status_t app_log_flush (void)
+{
+    if (!m_initialized) { return RD_ERROR_INVALID_STATE; }
+
+    return close_block();
 }
 
 rd_status_t app_log_config_get (app_log_config_t * const configuration)
 {
     if (NULL == configuration) { return RD_ERROR_NULL; }
 
-    configuration->interval_s = APP_LOG_INTERVAL_S;
+    memset (configuration, 0, sizeof (*configuration));
+    configuration->interval_s = m_interval_s;
     configuration->overflow = true;
     configuration->fields.datas.temperature_c = 1;
     configuration->fields.datas.humidity_rh = 1;

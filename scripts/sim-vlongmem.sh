@@ -25,6 +25,7 @@ gcc -std=gnu11 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
     -Wall -Wextra -Wno-unused-parameter \
     "${INC[@]}" "${DEFS[@]}" \
     "${SRC}/app_log_vlongmem.c" \
+    "${SRC}/app_settings.c" \
     "${SRC}/app_log_vlongmem_codec.c" \
     "${SRC}/app_log_vlongmem_time.c" \
     "${SRC}/app_log_vlongmem_fake.c" \

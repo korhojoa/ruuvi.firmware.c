@@ -12,6 +12,7 @@
 #include "app_led.h"
 #include "app_log.h"
 #include "app_sensor.h"
+#include "app_settings.h"
 #include "ruuvi_driver_error.h"
 #include "ruuvi_driver_sensor.h"
 #include "ruuvi_endpoint_5.h"
@@ -47,6 +48,15 @@ static inline void LOG (const char * const msg)
 static ri_timer_id_t heart_timer; //!< Timer for updating data.
 
 static uint64_t last_heartbeat_timestamp_ms; //!< Timestamp for heartbeat refresh.
+
+static uint32_t heartbeat_interval_ms (void)
+{
+#if APP_VLONGMEM_ENABLED
+    return app_settings_get().announce_ms * APP_NUM_REPEATS;
+#else
+    return APP_HEARTBEAT_INTERVAL_MS;
+#endif
+}
 
 static app_dataformat_t m_dataformat_state; //!< State of heartbeat.
 
@@ -186,7 +196,7 @@ rd_status_t app_heartbeat_init (void)
 
         if (RD_SUCCESS == err_code)
         {
-            err_code |= ri_timer_start (heart_timer, APP_HEARTBEAT_INTERVAL_MS, NULL);
+            err_code |= ri_timer_start (heart_timer, heartbeat_interval_ms(), NULL);
         }
     }
 
@@ -204,7 +214,7 @@ rd_status_t app_heartbeat_start (void)
     else
     {
         heartbeat (NULL, 0);
-        err_code |= ri_timer_start (heart_timer, APP_HEARTBEAT_INTERVAL_MS, NULL);
+        err_code |= ri_timer_start (heart_timer, heartbeat_interval_ms(), NULL);
     }
 
     return err_code;

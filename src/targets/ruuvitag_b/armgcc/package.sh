@@ -15,6 +15,11 @@ v) VERSION=${OPTARG};;
 esac
 done
 BINNAME=ruuvitag_b\_armgcc\_${NAME}\_${VERSION}
+case "$NAME" in
+  *vlongmem*)
+    echo "vlongmem DFU can overwrite stored history during staging. See docs/vlongmem/UPDATE.md."
+    ;;
+esac
 BOOTLOADER="ruuvitag_b_s132_6.1.1_bootloader_3.1.0.hex"     
 if [[ -f "$BOOTLOADER" ]]; then
    echo "Found bootloader."
@@ -29,8 +34,8 @@ else
    wget https://github.com/ruuvi/ruuvi.nrf5_sdk15_bootloader.c/releases/download/3.0.0/ruuvi_open_private.pem
 fi
 
-# Only this variant: "vlongmem" must not remove the "vlongmemfake" files.
-rm -f ruuvitag_b_armgcc_${NAME}_*
+# Replace only this version. Keep earlier packages available for restoration.
+rm -f "${BINNAME}"_*
 
 nrfutil settings generate --family NRF52 --application _build/nrf52832_xxaa.hex --application-version 1  --bootloader-version 1 --bl-settings-version 1 settings.hex 
 mergehex -m ../../../../nRF5_SDK_15.3.0_59ac345/components/softdevice/s132/hex/s132_nrf52_6.1.1_softdevice.hex $BOOTLOADER settings.hex -o sbc.hex

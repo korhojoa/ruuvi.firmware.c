@@ -13,6 +13,8 @@
 #include "app_log.h"
 #include "app_log_vlongmem_codec.h"
 #include "app_log_vlongmem_fake.h"
+#include "app_settings.h"
+#include "ruuvi_endpoints.h"
 #include "ruuvi_driver_error.h"
 #include "ruuvi_driver_sensor.h"
 #include "ruuvi_interface_flash.h"
@@ -48,6 +50,13 @@ static int64_t g_cut_after_words = -1;       // A power cut stops the next write
 static bool g_cut_hit;
 static uint64_t g_writes;
 static uint64_t g_erases;
+static bool g_reject_next_write;
+static bool g_reject_next_data_write;
+static unsigned g_expected_log_errors;
+static bool g_reject_settings_store;
+static bool g_skip_settings_store;
+static bool g_flash_stuck;
+static uint64_t g_real_ms;       // Simulated real time from EPOCH_BASE_S.
 
 nrf_fstorage_api_t nrf_fstorage_sd;
 
@@ -65,7 +74,8 @@ static void flash_map (void)
     memset (g_flash, 0xFF, REGION_SIZE);
 }
 
-ret_code_t nrf_fstorage_init (nrf_fstorage_t * p_fs, nrf_fstorage_api_t * p_api, void * p_param)
+ret_code_t nrf_fstorage_init (nrf_fstorage_t * p_fs, nrf_fstorage_api_t * p_api,
+                              void * p_param)
 {
     (void) p_api;
     (void) p_param;
@@ -78,10 +88,18 @@ ret_code_t nrf_fstorage_init (nrf_fstorage_t * p_fs, nrf_fstorage_api_t * p_api,
     return NRF_SUCCESS;
 }
 
-ret_code_t nrf_fstorage_write (nrf_fstorage_t const * p_fs, uint32_t dest, void const * p_src,
+ret_code_t nrf_fstorage_write (nrf_fstorage_t const * p_fs, uint32_t dest,
+                               void const * p_src,
                                uint32_t len, void * p_param)
 {
     (void) p_param;
+
+    if (g_reject_next_write || (g_reject_next_data_write && dest % PAGE_SIZE >= 32U))
+    {
+        g_reject_next_write = false;
+        g_reject_next_data_write = false;
+        return 1;
+    }
 
     if ( (dest < p_fs->start_addr) || ( (dest + len) > p_fs->end_addr)) { FAIL ("write out of region 0x%x+%u", dest, len); }
 
@@ -122,12 +140,14 @@ ret_code_t nrf_fstorage_write (nrf_fstorage_t const * p_fs, uint32_t dest, void 
     return NRF_SUCCESS;
 }
 
-ret_code_t nrf_fstorage_erase (nrf_fstorage_t const * p_fs, uint32_t page_addr, uint32_t len,
+ret_code_t nrf_fstorage_erase (nrf_fstorage_t const * p_fs, uint32_t page_addr,
+                               uint32_t len,
                                void * p_param)
 {
     (void) p_param;
 
-    if ( (page_addr < p_fs->start_addr) || ( (page_addr + (len * PAGE_SIZE)) > p_fs->end_addr)) { FAIL ("erase out of region"); }
+    if ( (page_addr < p_fs->start_addr)
+            || ( (page_addr + (len * PAGE_SIZE)) > p_fs->end_addr)) { FAIL ("erase out of region"); }
 
     if (0U != (page_addr % PAGE_SIZE)) { FAIL ("erase alignment"); }
 
@@ -161,6 +181,16 @@ static size_t g_record_count;
 rd_status_t rt_flash_store (const uint16_t file_id, const uint16_t record_id,
                             const void * const message, const size_t message_length)
 {
+    if (g_reject_settings_store && APP_FLASH_LOG_SETTINGS_RECORD == record_id)
+    {
+        return RD_ERROR_INTERNAL;
+    }
+
+    if (g_skip_settings_store && APP_FLASH_LOG_SETTINGS_RECORD == record_id)
+    {
+        return RD_SUCCESS;
+    }
+
     if (message_length > sizeof (g_records[0].data)) { FAIL ("record too large"); }
 
     for (size_t ii = 0; ii < g_record_count; ii++)
@@ -202,7 +232,7 @@ rd_status_t rt_flash_load (const uint16_t file_id, const uint16_t record_id,
 
 bool rt_flash_busy (void)
 {
-    return false;
+    return g_flash_stuck;
 }
 
 void ri_flash_purge (void)
@@ -225,14 +255,17 @@ void ri_log (const ri_log_severity_t severity, const char * const message)
 
 rd_status_t ri_yield (void)
 {
+    if (g_flash_stuck) { g_real_ms++; }
+
     return RD_SUCCESS;
 }
 
 /* ----------------------------------------------------------- simulated time */
 
-static uint64_t g_real_ms;       // Simulated real time from EPOCH_BASE_S.
 static uint64_t g_boot_real_ms;  // Real time of the current tag boot.
 static int64_t g_drift_ppm = -50; // The tag clock is slow.
+static uint64_t g_interval_ms = INTERVAL_MS;
+static uint64_t g_heartbeat_ms = HEARTBEAT_MS;
 
 uint64_t ri_rtc_millis (void)
 {
@@ -330,7 +363,12 @@ static void heartbeat (void)
 
     const rd_status_t err = app_log_process (&data);
 
-    if (RD_SUCCESS != err) { FAIL ("app_log_process 0x%x at %" PRIu64, err, g_real_ms); }
+    if (RD_SUCCESS != err)
+    {
+        if (0U == g_expected_log_errors) { FAIL ("app_log_process 0x%x at %" PRIu64, err, g_real_ms); }
+
+        g_expected_log_errors--;
+    }
 
     // Mirror the grid.
     if (!g_grid_started)
@@ -341,7 +379,7 @@ static void heartbeat (void)
 
     if (ts < g_grid_next_ms) { return; }
 
-    uint64_t missed = (ts - g_grid_next_ms) / INTERVAL_MS;
+    uint64_t missed = (ts - g_grid_next_ms) / g_interval_ms;
 
     if (missed > APP_VLONGMEM_MAX_MISSING)
     {
@@ -353,12 +391,14 @@ static void heartbeat (void)
 
     for (uint64_t ii = 0; ii < missed; ii++)
     {
-        truth_add ( (uint32_t) (g_grid_next_ms / 1000ULL), real_of_uptime_ms (g_grid_next_ms), &missing);
-        g_grid_next_ms += INTERVAL_MS;
+        truth_add ( (uint32_t) (g_grid_next_ms / 1000ULL), real_of_uptime_ms (g_grid_next_ms),
+                    &missing);
+        g_grid_next_ms += g_interval_ms;
     }
 
-    truth_add ( (uint32_t) (g_grid_next_ms / 1000ULL), real_of_uptime_ms (g_grid_next_ms), &s);
-    g_grid_next_ms += INTERVAL_MS;
+    truth_add ( (uint32_t) (g_grid_next_ms / 1000ULL), real_of_uptime_ms (g_grid_next_ms),
+                &s);
+    g_grid_next_ms += g_interval_ms;
 }
 
 static void mark_tail_may_be_absent (const size_t n)
@@ -381,6 +421,9 @@ static void boot (void)
     const rd_status_t err = app_log_init();
 
     if (RD_SUCCESS != err) { FAIL ("app_log_init 0x%x", err); }
+
+    g_interval_ms = app_settings_get().storage_s * 1000ULL;
+    g_heartbeat_ms = app_settings_get().announce_ms * APP_NUM_REPEATS;
 }
 
 /* ------------------------------------------------------------------- reading */
@@ -468,12 +511,14 @@ static void sync_and_verify (const uint32_t start_s, const uint64_t retention_ms
         {
             if (got.valid[f] != t->s.valid[f])
             {
-                FAIL ("validity of field %zu at %" PRIu64 ": got %d want %d", f, epoch_ms, got.valid[f], t->s.valid[f]);
+                FAIL ("validity of field %zu at %" PRIu64 ": got %d want %d", f, epoch_ms, got.valid[f],
+                      t->s.valid[f]);
             }
 
             if (got.valid[f] && (got.value[f] != t->s.value[f]))
             {
-                FAIL ("field %zu at %" PRIu64 ": got %d want %d", f, epoch_ms, got.value[f], t->s.value[f]);
+                FAIL ("field %zu at %" PRIu64 ": got %d want %d", f, epoch_ms, got.value[f],
+                      t->s.value[f]);
             }
         }
     }
@@ -522,13 +567,168 @@ static void advance (const uint64_t ms)
 
     while ( (g_real_ms < end) && !g_cut_hit)
     {
-        g_real_ms += HEARTBEAT_MS;
+        g_real_ms += g_heartbeat_ms;
         heartbeat();
     }
 }
 
+static void set_intervals (uint32_t announce_ms, uint32_t storage_s)
+{
+    const app_settings_t before = app_settings_get();
+    const app_settings_t requested = {announce_ms, storage_s};
+
+    if (RD_SUCCESS != app_settings_set (&requested)) { FAIL ("settings write"); }
+
+    if (before.storage_s != storage_s) { grid_reset(); }
+
+    g_interval_ms = storage_s * 1000ULL;
+    g_heartbeat_ms = announce_ms * APP_NUM_REPEATS;
+}
+
+static ri_comm_message_t g_reply;
+static rd_status_t save_reply (ri_comm_message_t * const reply)
+{
+    g_reply = *reply;
+    return RD_SUCCESS;
+}
+
+static void settings_scenario (void)
+{
+    g_drift_ppm = 0;
+    boot();
+    app_log_time_set (real_epoch_s());
+    advance (3600000ULL);
+    sync_and_verify (0, DAY_MS);
+    const uint8_t read[] = {0x22, 0x22, 0x07, 0, 0, 0, 0, 0, 0, 0, 0};
+
+    if (RD_SUCCESS != app_settings_handle (save_reply, read, sizeof (read))) { FAIL ("settings read"); }
+
+    const uint8_t expected[] = {0x22, 0x22, 0x06, 0, 0, 5, 5, 0, 0, 2, 0x58};
+
+    if (memcmp (expected, g_reply.data, sizeof (expected))) { FAIL ("settings read payload"); }
+
+    const app_settings_t invalid[] = {{99, 600}, {10001, 600}, {1285, 0},
+        {1285, 65536}, {10000, 19}
+    };
+
+    for (size_t i = 0; i < sizeof (invalid) / sizeof (invalid[0]); i++)
+    {
+        if (RD_ERROR_INVALID_PARAM != app_settings_set (&invalid[i])) { FAIL ("invalid settings accepted"); }
+    }
+
+    if (RD_ERROR_NULL != app_settings_set (NULL)) { FAIL ("null settings accepted"); }
+
+    const size_t records_before = g_record_count;
+    set_intervals (1285, 600);
+
+    if (g_record_count != records_before) { FAIL ("unchanged settings wrote flash"); }
+
+    const app_settings_t changed = {5000, 1800};
+    g_reject_next_write = true;
+
+    if (RD_SUCCESS == app_settings_set (&changed)) { FAIL ("failed flush accepted"); }
+
+    if (app_settings_get().storage_s != 600) { FAIL ("failed flush changed settings"); }
+
+    sync_and_verify (0, DAY_MS);
+    g_reject_settings_store = true;
+
+    if (RD_SUCCESS == app_settings_set (&changed)) { FAIL ("failed settings store accepted"); }
+
+    if (app_settings_get().storage_s != 600) { FAIL ("failed store changed settings"); }
+
+    g_reject_settings_store = false;
+    sync_and_verify (0, DAY_MS);
+    set_intervals (5000, 1800);
+    advance (7200000ULL);
+    sync_and_verify (0, DAY_MS);
+    const uint8_t write[] = {0x22, 0x22, 0x06, 0, 0, 0, 100, 0, 0, 0, 1};
+
+    if (RD_SUCCESS != app_settings_handle (save_reply, write, sizeof (write))) { FAIL ("settings wire write"); }
+
+    grid_reset();
+    g_interval_ms = 1000;
+    g_heartbeat_ms = 200;
+    advance (60000ULL);
+    sync_and_verify (0, DAY_MS);
+    // Change only the radio interval. The storage grid must stay intact.
+    set_intervals (200, 1);
+    advance (30000ULL);
+    sync_and_verify (0, DAY_MS);
+
+    if (RD_SUCCESS != app_log_flush()) { FAIL ("preboot flush"); }
+
+    g_real_ms += 10000;
+    boot();
+
+    if (app_settings_get().announce_ms != 200 || app_settings_get().storage_s != 1)
+    {
+        FAIL ("settings did not survive restart");
+    }
+
+    advance (10000ULL);
+    sync_and_verify (0, DAY_MS);
+    g_skip_settings_store = true;
+
+    if (RD_SUCCESS == app_settings_set (&changed)) { FAIL ("stale settings readback accepted"); }
+
+    if (app_settings_get().storage_s != 1) { FAIL ("stale readback changed settings"); }
+
+    g_skip_settings_store = false;
+    g_flash_stuck = true;
+
+    if (RD_ERROR_TIMEOUT != app_settings_set (&changed)) { FAIL ("flash wait did not time out"); }
+
+    g_flash_stuck = false;
+    sync_and_verify (0, DAY_MS);
+    set_intervals (10000, 65535);
+    advance (131100000ULL);
+    sync_and_verify (0, 3ULL * DAY_MS);
+
+    // An unknown settings version must not apply arbitrary intervals at boot.
+    for (size_t i = 0; i < g_record_count; i++)
+    {
+        if (APP_FLASH_LOG_SETTINGS_RECORD == g_records[i].record)
+        {
+            memset (g_records[i].data, 0xFF, g_records[i].len);
+        }
+    }
+
+    if (RD_SUCCESS != app_log_flush()) { FAIL ("final flush"); }
+
+    g_real_ms += 10000;
+    boot();
+
+    if (app_settings_get().announce_ms != APP_BLE_INTERVAL_MS
+            || app_settings_get().storage_s != APP_LOG_INTERVAL_S)
+    {
+        FAIL ("invalid settings did not use defaults");
+    }
+
+    advance (3600000ULL);
+    sync_and_verify (0, 3ULL * DAY_MS);
+    set_intervals (100, 1);
+    g_reject_next_data_write = true;
+    g_expected_log_errors = 1;
+    advance (30000ULL);
+
+    if (0U != g_expected_log_errors) { FAIL ("automatic flush failure was not exercised"); }
+
+    sync_and_verify (0, 3ULL * DAY_MS);
+    printf ("OK: settings, mixed intervals, failures and restart, %zu samples, %" PRIu64
+            " reads\n",
+            g_truth_count, g_reads);
+}
+
 int main (int argc, char ** argv)
 {
+    if (argc > 1 && 0 == strcmp (argv[1], "--settings"))
+    {
+        flash_map();
+        settings_scenario();
+        return 0;
+    }
+
     const uint32_t days = (argc > 1) ? (uint32_t) atoi (argv[1]) : 800U;
     g_verbose = (argc > 2);
     flash_map();

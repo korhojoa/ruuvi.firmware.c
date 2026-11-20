@@ -88,6 +88,8 @@ typedef struct
  * @param[in] epoch_now_s Current time, seconds from 1970.
  */
 void app_log_time_set (const uint32_t epoch_now_s);
+/** @brief Flush and close the current block without erasing the history. */
+rd_status_t app_log_flush (void);
 #else
 typedef struct
 {
